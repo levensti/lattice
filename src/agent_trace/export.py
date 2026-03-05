@@ -11,16 +11,11 @@ if TYPE_CHECKING:
     from .context import StepRecord, TraceSession
 
 
-def _step_to_dict(step: StepRecord) -> dict[str, Any]:
-    """Convert a StepRecord to a JSON-serialisable dictionary."""
-    return asdict(step)
-
-
 def _session_to_dict(session: TraceSession) -> dict[str, Any]:
     """Build the full JSON-serialisable representation of a session."""
     from .bottleneck import find_bottlenecks
 
-    steps = [_step_to_dict(s) for s in session.steps]
+    steps = [asdict(s) for s in session.steps]
     bottlenecks = [asdict(b) for b in find_bottlenecks(session)]
 
     scored = [s for s in session.steps if s.score is not None]
