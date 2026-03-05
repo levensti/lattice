@@ -124,6 +124,49 @@ for b in bottlenecks:
     # impact is one of: "error", "lowest_score", "largest_drop", "below_average"
 ```
 
+### JSON Export
+
+Export the entire trace as JSON for visualization, storage, or downstream analysis:
+
+```python
+# Flat list (all steps in order)
+json_str = session.to_json()
+# or as a dict
+trace_dict = session.to_dict()
+
+# Tree structure (respects parent-child span relationships)
+json_tree = session.to_json(tree=True)
+trace_tree = session.to_dict(tree=True)
+
+# Compact JSON (no indentation)
+json_compact = session.to_json(indent=None)
+```
+
+Both `to_json()` and `to_dict()` preserve all step information:
+- Inputs, outputs, timing, and criteria
+- Scores and explanations (if present)
+- Errors (if any)
+- Parent-child span relationships
+
+**Tree structure example:**
+
+```python
+with trace_session() as session:
+    outer()
+    inner()  # called by outer
+
+# Flat: [outer_step, inner_step]
+session.to_dict(tree=False)
+
+# Tree: outer_step with inner_step as a child
+session.to_dict(tree=True)
+# → {"trace_id": "...", "steps": [{
+#     "name": "outer", ..., "children": [
+#       {"name": "inner", ..., "children": []}
+#     ]
+#   }]}
+```
+
 ## How It Works
 
 1. **Trace**: Decorators capture inputs, outputs, timing, and parent-child relationships for each step, emitting OpenTelemetry spans.

@@ -77,6 +77,15 @@ def main():
     print(f"Final output: {final}\n")
     print(f"Traced {len(session.steps)} steps\n")
 
+    # Export trace as JSON (flat and tree modes)
+    print("=== Trace as JSON (flat) ===")
+    print(session.to_json())
+    print()
+
+    print("=== Trace as JSON (tree) ===")
+    print(session.to_json(tree=True))
+    print()
+
     try:
         score_trace(session)
 
