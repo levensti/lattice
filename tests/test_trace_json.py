@@ -3,24 +3,23 @@
 import json
 
 from agent_trace import trace_agent, trace_session, trace_tool
-from agent_trace.context import StepRecord, TraceSession
+from agent_trace.context import TraceSession
+
+from .helpers import make_step
 
 
 def _step(name, index, score=None, error=None, latency_ms=100.0, parent_span_id=None):
-    return StepRecord(
-        span_id=f"span-{index}",
-        name=name,
-        step_type="agent",
+    return make_step(
+        name,
+        index,
+        score=score,
+        error=error,
+        latency_ms=latency_ms,
+        parent_span_id=parent_span_id,
         description=f"desc-{name}",
         criteria=f"criteria-{name}",
         input_data='{"x": 1}',
         output_data='"result"',
-        step_index=index,
-        latency_ms=latency_ms,
-        parent_span_id=parent_span_id,
-        score=score,
-        score_explanation=f"Explanation for {name}" if score else None,
-        error=error,
     )
 
 

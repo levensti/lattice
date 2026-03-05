@@ -1,22 +1,7 @@
-from agent_trace.context import StepRecord, TraceSession
+from agent_trace.context import TraceSession
 from agent_trace.bottleneck import find_bottlenecks
 
-
-def _step(name, index, score=None, error=None, latency_ms=100.0):
-    return StepRecord(
-        span_id=f"span-{index}",
-        name=name,
-        step_type="agent",
-        description="",
-        criteria="",
-        input_data="",
-        output_data="",
-        step_index=index,
-        latency_ms=latency_ms,
-        score=score,
-        score_explanation=f"Explanation for {name}" if score else None,
-        error=error,
-    )
+from .helpers import make_step as _step
 
 
 def test_bottlenecks_sorted_by_score():
