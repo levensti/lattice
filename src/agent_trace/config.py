@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AgentTraceConfig(BaseModel):
@@ -14,6 +14,9 @@ class AgentTraceConfig(BaseModel):
     judge_api_key: str | None = None
     judge_api_base: str = "https://api.openai.com/v1"
     judge_max_concurrency: int = 5
+    judge_max_retries: int = Field(default=3, ge=0)
+    judge_retry_base_delay: float = Field(default=1.0, ge=0)
+    judge_retry_max_delay: float = Field(default=30.0, ge=0)
 
 
 _config: AgentTraceConfig | None = None

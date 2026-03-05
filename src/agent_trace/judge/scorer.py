@@ -72,7 +72,13 @@ def _get_provider(provider: Any | None):
             "Call configure(judge_api_key=...) or set OPENAI_API_KEY."
         )
     return create_provider(
-        cfg.judge_provider, cfg.judge_api_key, cfg.judge_model, cfg.judge_api_base,
+        cfg.judge_provider,
+        cfg.judge_api_key,
+        cfg.judge_model,
+        cfg.judge_api_base,
+        max_retries=cfg.judge_max_retries,
+        retry_base_delay=cfg.judge_retry_base_delay,
+        retry_max_delay=cfg.judge_retry_max_delay,
     )
 
 
