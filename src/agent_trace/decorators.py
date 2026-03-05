@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .context import (
     StepRecord,
+    TraceSession,
     _current_session,
     _current_span_id,
 )
@@ -187,3 +188,136 @@ def trace_tool(
 ) -> Callable:
     """Decorator to trace a tool call with quality criteria."""
     return _trace_decorator(name, "tool", description, criteria, step_id)
+
+
+def trace_pipeline(
+    name: str,
+    *,
+    description: str = "",
+    criteria: str = "",
+    trace_id: str | None = None,
+) -> Callable:
+    """Decorator that wraps a function as a traced pipeline session.
+
+    Creates a new :class:`TraceSession`, executes the decorated function
+    inside that session, records the pipeline itself as a step, and returns
+    ``(result, session)`` so callers get both the function's return value
+    and the completed trace.
+
+    Works with both synchronous and ``async`` functions.
+
+    Example::
+
+        @trace_pipeline(name="my_pipeline")
+        def run(query: str) -> str:
+            return agent(query)
+
+        result, session = run("hello")
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> tuple[Any, TraceSession]:
+            session = TraceSession(trace_id=trace_id or uuid.uuid4().hex)
+            session_token = _current_session.set(session)
+            span_token = _current_span_id.set(None)
+
+            input_str = _capture_inputs(func, args, kwargs)
+            span_id = uuid.uuid4().hex
+            parent_token = _current_span_id.set(span_id)
+            step_index = session.next_index()
+            start = time.perf_counter()
+
+            otel_attrs = {
+                "agent_trace.name": name,
+                "agent_trace.type": "pipeline",
+                "agent_trace.input": input_str,
+            }
+            try:
+                with traced_span(f"pipeline:{name}", otel_attrs) as span:
+                    result = func(*args, **kwargs)
+                    output_str = _safe_serialize(result)
+                    latency = (time.perf_counter() - start) * 1000
+                    if span is not None:
+                        span.set_attribute("agent_trace.output", output_str[:4096])
+                        span.set_attribute("agent_trace.latency_ms", latency)
+                    _record_step(
+                        session,
+                        span_id=span_id, name=name, step_type="pipeline",
+                        description=description, criteria=criteria,
+                        input_data=input_str, output_data=output_str,
+                        step_index=step_index, latency_ms=latency,
+                        parent_span_id=None,
+                    )
+                    return result, session
+            except Exception as exc:
+                latency = (time.perf_counter() - start) * 1000
+                _record_step(
+                    session,
+                    span_id=span_id, name=name, step_type="pipeline",
+                    description=description, criteria=criteria,
+                    input_data=input_str, output_data="",
+                    step_index=step_index, latency_ms=latency,
+                    parent_span_id=None, error=str(exc),
+                )
+                raise
+            finally:
+                _current_span_id.reset(parent_token)
+                _current_span_id.reset(span_token)
+                _current_session.reset(session_token)
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> tuple[Any, TraceSession]:
+            session = TraceSession(trace_id=trace_id or uuid.uuid4().hex)
+            session_token = _current_session.set(session)
+            span_token = _current_span_id.set(None)
+
+            input_str = _capture_inputs(func, args, kwargs)
+            span_id = uuid.uuid4().hex
+            parent_token = _current_span_id.set(span_id)
+            step_index = session.next_index()
+            start = time.perf_counter()
+
+            otel_attrs = {
+                "agent_trace.name": name,
+                "agent_trace.type": "pipeline",
+                "agent_trace.input": input_str,
+            }
+            try:
+                with traced_span(f"pipeline:{name}", otel_attrs) as span:
+                    result = await func(*args, **kwargs)
+                    output_str = _safe_serialize(result)
+                    latency = (time.perf_counter() - start) * 1000
+                    if span is not None:
+                        span.set_attribute("agent_trace.output", output_str[:4096])
+                        span.set_attribute("agent_trace.latency_ms", latency)
+                    _record_step(
+                        session,
+                        span_id=span_id, name=name, step_type="pipeline",
+                        description=description, criteria=criteria,
+                        input_data=input_str, output_data=output_str,
+                        step_index=step_index, latency_ms=latency,
+                        parent_span_id=None,
+                    )
+                    return result, session
+            except Exception as exc:
+                latency = (time.perf_counter() - start) * 1000
+                _record_step(
+                    session,
+                    span_id=span_id, name=name, step_type="pipeline",
+                    description=description, criteria=criteria,
+                    input_data=input_str, output_data="",
+                    step_index=step_index, latency_ms=latency,
+                    parent_span_id=None, error=str(exc),
+                )
+                raise
+            finally:
+                _current_span_id.reset(parent_token)
+                _current_span_id.reset(span_token)
+                _current_session.reset(session_token)
+
+        if inspect.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+
+    return decorator
