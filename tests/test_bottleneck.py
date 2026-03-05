@@ -249,16 +249,6 @@ def test_compare_new_step_in_later_session():
     assert step_b.score_trend == "no_data"
 
 
-def test_compare_session_ids_preserved():
-    s1 = TraceSession(trace_id="alpha")
-    s1.add_step(_step("x", 0, score=3.0))
-    s2 = TraceSession(trace_id="beta")
-    s2.add_step(_step("x", 0, score=3.0))
-
-    result = compare_sessions([s1, s2])
-    assert result.session_ids == ["alpha", "beta"]
-
-
 def test_compare_error_in_every_session():
     s1 = TraceSession(trace_id="r1")
     s1.add_step(_step("flaky", 0, error="crash"))

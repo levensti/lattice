@@ -117,6 +117,17 @@ _SCORE_THRESHOLD = 0.1  # minimum absolute change to count as non-stable
 _LATENCY_THRESHOLD_RATIO = 0.1  # 10 % relative change to count as non-stable
 
 
+@dataclass
+class _StepAccumulator:
+    """Mutable per-step state collected while iterating over sessions."""
+
+    scores: list[float | None] = field(default_factory=list)
+    latencies: list[float] = field(default_factory=list)
+    error_count: int = 0
+    bottleneck_count: int = 0
+    session_count: int = 0
+
+
 def compare_sessions(sessions: list[TraceSession]) -> SessionComparison:
     """Compare the same pipeline across multiple runs.
 
@@ -145,89 +156,73 @@ def compare_sessions(sessions: list[TraceSession]) -> SessionComparison:
     if len(sessions) < 2:
         raise ValueError("compare_sessions requires at least two sessions")
 
-    # Collect per-step data across sessions, preserving session order.
-    step_scores: dict[str, list[float | None]] = {}
-    step_latencies: dict[str, list[float]] = {}
-    step_errors: dict[str, int] = {}
-
-    # Track which steps are bottlenecks in each session.
-    # A step is a "bottleneck" if it appears in the *worst half* of
-    # find_bottlenecks results (or has an error).
-    bottleneck_counts: dict[str, int] = {}
-    step_session_counts: dict[str, int] = {}
-
-    # Preserve insertion order so output is deterministic: steps appear in
-    # the order they are first encountered across sessions.
-    seen_steps: list[str] = []
+    # Collect per-step data across sessions, preserving insertion order so
+    # output is deterministic.
+    accumulators: dict[str, _StepAccumulator] = {}
 
     for session_idx, session in enumerate(sessions):
-        # Build a set of step names present in this session so we can pad
-        # missing steps with None scores later.
         session_step_names: set[str] = set()
 
         for step in session.steps:
             name = step.name
             session_step_names.add(name)
 
-            if name not in step_scores:
-                # Initialize with None/0.0 for all prior sessions where this
+            if name not in accumulators:
+                # Pad with None/0.0 for all prior sessions where this
                 # step did not exist.
-                step_scores[name] = [None] * session_idx
-                step_latencies[name] = [0.0] * session_idx
-                step_errors[name] = 0
-                bottleneck_counts[name] = 0
-                step_session_counts[name] = 0
-                seen_steps.append(name)
+                acc = _StepAccumulator(
+                    scores=[None] * session_idx,
+                    latencies=[0.0] * session_idx,
+                )
+                accumulators[name] = acc
+            else:
+                acc = accumulators[name]
 
-            step_session_counts[name] += 1
+            acc.session_count += 1
 
             if step.error is not None:
-                step_scores[name].append(None)
-                step_errors[name] += 1
+                acc.scores.append(None)
+                acc.error_count += 1
             else:
-                step_scores[name].append(step.score)
+                acc.scores.append(step.score)
 
-            step_latencies[name].append(step.latency_ms)
+            acc.latencies.append(step.latency_ms)
 
-        # Determine bottleneck steps for this session.
+        # A step is a "bottleneck" if it appears in the worst half of
+        # find_bottlenecks results (or has an error).
         bnecks = find_bottlenecks(session)
         if bnecks:
             cutoff = max(len(bnecks) // 2, 1)
-            worst_names = {b.step_name for b in bnecks[:cutoff]}
-            for name in worst_names:
-                bottleneck_counts[name] = bottleneck_counts.get(name, 0) + 1
+            for b in bnecks[:cutoff]:
+                if b.step_name in accumulators:
+                    accumulators[b.step_name].bottleneck_count += 1
 
-        # For steps that exist in other sessions but not this one, we still
-        # need to record a gap so the scores list stays aligned with sessions.
-        for name in seen_steps:
+        # For steps that exist in other sessions but not this one, record a
+        # gap so the lists stay aligned with sessions.
+        for name, acc in accumulators.items():
             if name not in session_step_names:
-                step_scores[name].append(None)
-                step_latencies[name].append(0.0)
+                acc.scores.append(None)
+                acc.latencies.append(0.0)
 
     # Build StepComparison objects.
     comparisons: list[StepComparison] = []
     regressions: list[StepComparison] = []
     recurring: list[StepComparison] = []
 
-    for name in seen_steps:
-        scores = step_scores[name]
-        latencies = step_latencies[name]
-        error_count = step_errors[name]
+    for name, acc in accumulators.items():
+        score_trend, score_delta = _compute_score_trend(acc.scores)
+        latency_trend, latency_delta = _compute_latency_trend(acc.latencies)
 
-        score_trend, score_delta = _compute_score_trend(scores)
-        latency_trend, latency_delta = _compute_latency_trend(latencies)
-
-        present_count = step_session_counts[name]
         is_recurring = (
-            present_count >= 2
-            and bottleneck_counts.get(name, 0) > present_count / 2
+            acc.session_count >= 2
+            and acc.bottleneck_count > acc.session_count / 2
         )
 
         comp = StepComparison(
             step_name=name,
-            scores=scores,
-            latencies_ms=latencies,
-            error_count=error_count,
+            scores=acc.scores,
+            latencies_ms=acc.latencies,
+            error_count=acc.error_count,
             score_trend=score_trend,
             latency_trend=latency_trend,
             score_delta=score_delta,
@@ -257,12 +252,12 @@ def _compute_score_trend(
     ``None`` entries (errors / unscored) are skipped.  The trend is based on
     the first and last *available* scores.
     """
-    valid = [(i, s) for i, s in enumerate(scores) if s is not None]
+    valid = [s for s in scores if s is not None]
     if len(valid) < 2:
         return ("no_data", 0.0)
 
-    first = valid[0][1]
-    last = valid[-1][1]
+    first = valid[0]
+    last = valid[-1]
     delta = last - first
 
     if delta < -_SCORE_THRESHOLD:
@@ -290,9 +285,6 @@ def _compute_latency_trend(
     # Use relative threshold so small absolute jitter on fast steps
     # doesn't register as a trend.
     avg = mean(valid)
-    if avg == 0:
-        return ("stable", 0.0)
-
     if delta / avg > _LATENCY_THRESHOLD_RATIO:
         return ("regressed", delta)
     if delta / avg < -_LATENCY_THRESHOLD_RATIO:
