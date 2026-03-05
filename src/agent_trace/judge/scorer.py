@@ -62,9 +62,10 @@ async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
     step.score, step.score_explanation = _parse_judge_response(raw)
 
 
-def _get_provider(provider: Any | None):
+def _get_provider(provider: Any | None) -> tuple[Any, bool]:
+    """Return *(provider, owns)* where *owns* is True when we created it."""
     if provider is not None:
-        return provider
+        return provider, False
     cfg = get_config()
     if not cfg.judge_api_key:
         raise ValueError(
@@ -73,7 +74,7 @@ def _get_provider(provider: Any | None):
         )
     return create_provider(
         cfg.judge_provider, cfg.judge_api_key, cfg.judge_model, cfg.judge_api_base,
-    )
+    ), True
 
 
 def score_trace(
@@ -82,10 +83,14 @@ def score_trace(
     provider: Any | None = None,
 ) -> list[StepRecord]:
     """Score every step in the session synchronously. Updates steps in place."""
-    prov = _get_provider(provider)
-    for step in session.steps:
-        if step.error is None:
-            _score_single_step(step, prov)
+    prov, owns = _get_provider(provider)
+    try:
+        for step in session.steps:
+            if step.error is None:
+                _score_single_step(step, prov)
+    finally:
+        if owns:
+            prov.close()
     return session.steps
 
 
@@ -96,13 +101,17 @@ async def async_score_trace(
     max_concurrency: int = 5,
 ) -> list[StepRecord]:
     """Score every step concurrently. Updates steps in place."""
-    prov = _get_provider(provider)
-    sem = asyncio.Semaphore(max_concurrency)
-    scorable = [s for s in session.steps if s.error is None]
+    prov, owns = _get_provider(provider)
+    try:
+        sem = asyncio.Semaphore(max_concurrency)
+        scorable = [s for s in session.steps if s.error is None]
 
-    async def _bounded(step: StepRecord) -> None:
-        async with sem:
-            await _async_score_single_step(step, prov)
+        async def _bounded(step: StepRecord) -> None:
+            async with sem:
+                await _async_score_single_step(step, prov)
 
-    await asyncio.gather(*[_bounded(s) for s in scorable])
+        await asyncio.gather(*[_bounded(s) for s in scorable])
+    finally:
+        if owns:
+            await prov.aclose()
     return session.steps

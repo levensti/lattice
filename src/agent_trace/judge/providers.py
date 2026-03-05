@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
@@ -11,9 +12,115 @@ class JudgeProvider(Protocol):
 
     def judge(self, system_prompt: str, user_prompt: str) -> str: ...
     async def ajudge(self, system_prompt: str, user_prompt: str) -> str: ...
+    def close(self) -> None: ...
+    async def aclose(self) -> None: ...
 
 
-class OpenAIJudgeProvider:
+class BaseJudgeProvider(ABC):
+    """Shared HTTP-client lifecycle and request logic for judge providers.
+
+    Subclasses define the API-specific details: headers, payload shape, URL
+    path, and how to extract the text from the JSON response.
+    """
+
+    api_base: str
+
+    def __init__(self) -> None:
+        self._sync_client: httpx.Client | None = None
+        self._async_client: httpx.AsyncClient | None = None
+
+    # -- alias kept for backward compatibility with tests that use _client --
+
+    @property
+    def _client(self) -> httpx.Client | None:
+        return self._sync_client
+
+    @_client.setter
+    def _client(self, value: httpx.Client | None) -> None:
+        self._sync_client = value
+
+    # -- lazy client accessors --
+
+    def _get_sync_client(self) -> httpx.Client:
+        if self._sync_client is None:
+            self._sync_client = httpx.Client(timeout=60.0)
+        return self._sync_client
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(timeout=60.0)
+        return self._async_client
+
+    # -- abstract hooks for subclasses --
+
+    @abstractmethod
+    def _headers(self) -> dict[str, str]: ...
+
+    @abstractmethod
+    def _payload(self, system_prompt: str, user_prompt: str) -> dict: ...
+
+    @abstractmethod
+    def _url(self) -> str: ...
+
+    @abstractmethod
+    def _extract_text(self, body: Any) -> str: ...
+
+    # -- judge / ajudge --
+
+    def judge(self, system_prompt: str, user_prompt: str) -> str:
+        client = self._get_sync_client()
+        resp = client.post(
+            self._url(),
+            headers=self._headers(),
+            json=self._payload(system_prompt, user_prompt),
+        )
+        resp.raise_for_status()
+        return self._extract_text(resp.json())
+
+    async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
+        client = self._get_async_client()
+        resp = await client.post(
+            self._url(),
+            headers=self._headers(),
+            json=self._payload(system_prompt, user_prompt),
+        )
+        resp.raise_for_status()
+        return self._extract_text(resp.json())
+
+    # -- resource management --
+
+    def close(self) -> None:
+        """Close underlying HTTP clients and release connection pools."""
+        if self._sync_client is not None:
+            self._sync_client.close()
+            self._sync_client = None
+        if self._async_client is not None:
+            self._async_client.close()
+            self._async_client = None
+
+    async def aclose(self) -> None:
+        """Async close underlying HTTP clients and release connection pools."""
+        if self._sync_client is not None:
+            self._sync_client.close()
+            self._sync_client = None
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    def __enter__(self) -> BaseJudgeProvider:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    async def __aenter__(self) -> BaseJudgeProvider:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
+
+
+class OpenAIJudgeProvider(BaseJudgeProvider):
     """Calls any OpenAI-compatible chat completions endpoint."""
 
     def __init__(
@@ -22,6 +129,7 @@ class OpenAIJudgeProvider:
         model: str = "gpt-4o",
         api_base: str = "https://api.openai.com/v1",
     ):
+        super().__init__()
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
@@ -42,28 +150,14 @@ class OpenAIJudgeProvider:
             "temperature": 0.1,
         }
 
-    def judge(self, system_prompt: str, user_prompt: str) -> str:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(
-                f"{self.api_base}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(system_prompt, user_prompt),
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+    def _url(self) -> str:
+        return f"{self.api_base}/chat/completions"
 
-    async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{self.api_base}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(system_prompt, user_prompt),
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+    def _extract_text(self, body: Any) -> str:
+        return body["choices"][0]["message"]["content"]
 
 
-class AnthropicJudgeProvider:
+class AnthropicJudgeProvider(BaseJudgeProvider):
     """Calls the Anthropic Messages API."""
 
     def __init__(
@@ -71,6 +165,7 @@ class AnthropicJudgeProvider:
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
     ):
+        super().__init__()
         self.api_key = api_key
         self.model = model
         self.api_base = "https://api.anthropic.com/v1"
@@ -91,25 +186,11 @@ class AnthropicJudgeProvider:
             "temperature": 0.1,
         }
 
-    def judge(self, system_prompt: str, user_prompt: str) -> str:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(
-                f"{self.api_base}/messages",
-                headers=self._headers(),
-                json=self._payload(system_prompt, user_prompt),
-            )
-            resp.raise_for_status()
-            return resp.json()["content"][0]["text"]
+    def _url(self) -> str:
+        return f"{self.api_base}/messages"
 
-    async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{self.api_base}/messages",
-                headers=self._headers(),
-                json=self._payload(system_prompt, user_prompt),
-            )
-            resp.raise_for_status()
-            return resp.json()["content"][0]["text"]
+    def _extract_text(self, body: Any) -> str:
+        return body["content"][0]["text"]
 
 
 def create_provider(
