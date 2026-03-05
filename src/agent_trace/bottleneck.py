@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import mean
 
-from .context import TraceSession
+from .context import StepRecord, TraceSession
 
 
 @dataclass
@@ -136,6 +136,13 @@ def compare_sessions(sessions: list[TraceSession]) -> SessionComparison:
     recurring bottleneck (appeared in ``find_bottlenecks`` results in more
     than half of the sessions it was present in).
 
+    Steps are matched by name.  When a step name appears more than once in a
+    single session (e.g. retries), only the last occurrence is kept.
+
+    A score change is considered a regression/improvement when the absolute
+    delta exceeds 0.1.  A latency change is considered significant when the
+    delta exceeds 10 % of the mean latency across sessions.
+
     Parameters
     ----------
     sessions:
@@ -161,12 +168,16 @@ def compare_sessions(sessions: list[TraceSession]) -> SessionComparison:
     accumulators: dict[str, _StepAccumulator] = {}
 
     for session_idx, session in enumerate(sessions):
-        session_step_names: set[str] = set()
-
+        # Deduplicate steps within a session: when the same step name
+        # appears more than once (e.g. retries), keep the last occurrence
+        # so that each session contributes exactly one entry per step.
+        deduped: dict[str, StepRecord] = {}
         for step in session.steps:
-            name = step.name
-            session_step_names.add(name)
+            deduped[step.name] = step
 
+        session_step_names = set(deduped.keys())
+
+        for name, step in deduped.items():
             if name not in accumulators:
                 # Pad with None/0.0 for all prior sessions where this
                 # step did not exist.

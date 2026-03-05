@@ -259,16 +259,6 @@ def test_compare_session_ids_preserved():
     assert result.session_ids == ["alpha", "beta"]
 
 
-def test_compare_session_ids_preserved():
-    s1 = TraceSession(trace_id="alpha")
-    s1.add_step(_step("x", 0, score=3.0))
-    s2 = TraceSession(trace_id="beta")
-    s2.add_step(_step("x", 0, score=3.0))
-
-    result = compare_sessions([s1, s2])
-    assert result.session_ids == ["alpha", "beta"]
-
-
 def test_compare_error_in_every_session():
     s1 = TraceSession(trace_id="r1")
     s1.add_step(_step("flaky", 0, error="crash"))
@@ -281,3 +271,31 @@ def test_compare_error_in_every_session():
     assert comp.scores == [None, None]
     assert comp.score_trend == "no_data"
     assert comp.recurring_bottleneck is True
+
+
+def test_compare_duplicate_step_names_in_session():
+    """When a step name appears multiple times in one session (e.g. retry),
+    only the last occurrence is used so lists stay aligned with sessions."""
+    s1 = TraceSession(trace_id="r1")
+    s1.add_step(_step("fetch", 0, score=2.0, latency_ms=100))
+    s1.add_step(_step("fetch", 1, score=4.0, latency_ms=150))  # retry succeeds
+
+    s2 = _make_session([("fetch", 0, 3.5, 200)], trace_id="r2")
+
+    result = compare_sessions([s1, s2])
+    comp = result.step_comparisons[0]
+    # Should use the last occurrence from session 1 (score=4.0, latency=150)
+    assert comp.scores == [4.0, 3.5]
+    assert comp.latencies_ms == [150.0, 200.0]
+    assert len(comp.scores) == 2  # one entry per session, not three
+
+
+def test_compare_with_empty_session():
+    s1 = _make_session([("step_a", 0, 4.0, 100)], trace_id="r1")
+    s2 = TraceSession(trace_id="r2")  # empty session
+
+    result = compare_sessions([s1, s2])
+    comp = result.step_comparisons[0]
+    # step_a is absent from session 2
+    assert comp.scores == [4.0, None]
+    assert comp.score_trend == "no_data"
