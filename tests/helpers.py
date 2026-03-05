@@ -28,6 +28,6 @@ def make_step(
         latency_ms=latency_ms,
         parent_span_id=parent_span_id,
         score=score,
-        score_explanation=f"Explanation for {name}" if score else None,
+        score_explanation=f"Explanation for {name}" if score is not None else None,
         error=error,
     )

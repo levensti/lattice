@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from agent_trace import trace_agent, trace_session, trace_tool
 from agent_trace.context import TraceSession
 
@@ -82,6 +84,12 @@ def test_session_to_dict_flat_empty():
     assert d == {"trace_id": "test-trace-id", "steps": []}
 
 
+def test_session_to_dict_tree_empty():
+    session = TraceSession(trace_id="test-trace-id")
+    d = session.to_dict(tree=True)
+    assert d == {"trace_id": "test-trace-id", "steps": []}
+
+
 def test_session_to_dict_flat_ordering():
     session = TraceSession(trace_id="t1")
     session.add_step(_step("a", 0))
@@ -159,6 +167,18 @@ def test_session_to_dict_tree_multiple_children():
     assert len(parent["children"]) == 2
     assert parent["children"][0]["name"] == "child_a"
     assert parent["children"][1]["name"] == "child_b"
+
+
+def test_session_to_dict_tree_duplicate_span_id_raises():
+    """Duplicate span_ids in tree mode should raise ValueError."""
+    session = TraceSession(trace_id="t1")
+    step_a = _step("a", 0)
+    step_b = _step("b", 0)  # same span_id "span-0"
+    session.add_step(step_a)
+    session.add_step(step_b)
+
+    with pytest.raises(ValueError, match="Duplicate span_id"):
+        session.to_dict(tree=True)
 
 
 def test_session_to_dict_tree_orphan_becomes_root():

@@ -46,9 +46,16 @@ class StepRecord:
 
 
 def _build_tree(steps: list[StepRecord]) -> list[dict[str, Any]]:
-    """Arrange flat steps into a nested tree based on parent_span_id."""
+    """Arrange flat steps into a nested tree based on parent_span_id.
+
+    Raises ``ValueError`` if any two steps share the same ``span_id``.
+    """
     nodes: dict[str, dict[str, Any]] = {}
     for step in steps:
+        if step.span_id in nodes:
+            raise ValueError(
+                f"Duplicate span_id '{step.span_id}' found in trace steps"
+            )
         node = step.to_dict()
         node["children"] = []
         nodes[step.span_id] = node
