@@ -41,7 +41,7 @@ class TraceSession:
     def add_step(self, step: StepRecord) -> None:
         self.steps.append(step)
 
-    def export_json(self, indent: int = 2) -> str:
+    def export_json(self, indent: int | None = 2) -> str:
         """Return the session as a formatted JSON string.
 
         The output includes a summary, all steps, and bottleneck analysis.

@@ -8,7 +8,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .context import StepRecord, TraceSession
+    from .context import TraceSession
 
 
 def _session_to_dict(session: TraceSession) -> dict[str, Any]:
@@ -38,7 +38,7 @@ def _session_to_dict(session: TraceSession) -> dict[str, Any]:
     }
 
 
-def export_json(session: TraceSession, indent: int = 2) -> str:
+def export_json(session: TraceSession, indent: int | None = 2) -> str:
     """Return the session as a formatted JSON string."""
     return json.dumps(_session_to_dict(session), indent=indent)
 
@@ -200,92 +200,88 @@ def _build_heatmap_html(steps: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def _build_step_html(step: dict[str, Any], is_bottleneck: bool) -> str:
+    """Build HTML for a single step in the timeline."""
+    idx = step["step_index"]
+    is_error = step.get("error") is not None
+    score = step.get("score")
+    parent = step.get("parent_span_id")
+
+    css_classes = ["step"]
+    if is_error:
+        css_classes.append("error")
+    if is_bottleneck:
+        css_classes.append("bottleneck")
+
+    parts: list[str] = [f'<div class="{" ".join(css_classes)}">', '<div class="dot"></div>']
+
+    # Header row
+    badge_cls = "badge-agent" if step["step_type"] == "agent" else "badge-tool"
+    header = [
+        f'<span class="step-name">{_esc(step["name"])}</span>',
+        f'<span class="badge {badge_cls}">{_esc(step["step_type"])}</span>',
+    ]
+    if is_error:
+        header.append('<span class="badge badge-error">error</span>')
+    if is_bottleneck:
+        header.append('<span class="badge badge-bottleneck">bottleneck</span>')
+    parts.append(f'<div class="step-header">{"".join(header)}</div>')
+
+    # Meta row
+    meta = [f"<span>Step #{idx}</span>", f"<span>{_fmt_latency(step.get('latency_ms', 0))}</span>"]
+    if score is not None:
+        meta.append(f"<span>Score: {score:.1f}/5</span>")
+    if parent:
+        meta.append(f"<span>Parent: {_esc(parent[:8])}...</span>")
+    parts.append(f'<div class="step-meta">{"".join(meta)}</div>')
+
+    # Score bar
+    if score is not None:
+        pct = _score_percent(score)
+        color = _score_color(score)
+        parts.append(
+            f'<div class="score-bar-container">'
+            f'<div class="score-bar-track">'
+            f'<div class="score-bar-fill" style="width:{pct:.1f}%;background:{color}"></div>'
+            f'</div>'
+            f'<div class="score-label">{score:.1f} / 5.0</div>'
+            f'</div>'
+        )
+
+    # Score explanation
+    if step.get("score_explanation"):
+        parts.append(f'<div class="explanation">{_esc(step["score_explanation"])}</div>')
+
+    # Error message
+    if is_error:
+        parts.append(f'<div class="bottleneck-callout">Error: {_esc(step["error"])}</div>')
+
+    # Collapsible I/O
+    parts.append('<div class="collapsible">&#9654; Show Input / Output</div>')
+    parts.append('<div class="collapsible-content">')
+    for field, label in [("input_data", "Input"), ("output_data", "Output")]:
+        if step.get(field):
+            parts.append(f'<div class="io-block"><strong>{label}:</strong>\n{_esc(step[field])}</div>')
+    parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _build_timeline_html(
     steps: list[dict[str, Any]],
     bottleneck_indices: set[int],
 ) -> str:
     """Build the step-by-step timeline."""
-    parts = ['<h2>Step-by-Step Timeline</h2>', '<div class="timeline">']
-
-    for step in steps:
-        idx = step["step_index"]
-        is_error = step.get("error") is not None
-        is_bn = idx in bottleneck_indices
-        cls = "step"
-        if is_error:
-            cls += " error"
-        if is_bn:
-            cls += " bottleneck"
-
-        score = step.get("score")
-        latency = step.get("latency_ms", 0)
-        parent = step.get("parent_span_id")
-
-        parts.append(f'<div class="{cls}">')
-        parts.append('<div class="dot"></div>')
-
-        # Header row
-        parts.append('<div class="step-header">')
-        parts.append(f'<span class="step-name">{_esc(step["name"])}</span>')
-        badge_cls = "badge-agent" if step["step_type"] == "agent" else "badge-tool"
-        parts.append(
-            f'<span class="badge {badge_cls}">{_esc(step["step_type"])}</span>'
-        )
-        if is_error:
-            parts.append('<span class="badge badge-error">error</span>')
-        if is_bn:
-            parts.append('<span class="badge badge-bottleneck">bottleneck</span>')
-        parts.append("</div>")
-
-        # Meta row
-        parts.append('<div class="step-meta">')
-        parts.append(f"<span>Step #{idx}</span>")
-        parts.append(f"<span>{_fmt_latency(latency)}</span>")
-        if score is not None:
-            parts.append(f"<span>Score: {score:.1f}/5</span>")
-        if parent:
-            parts.append(f"<span>Parent: {_esc(parent[:8])}...</span>")
-        parts.append("</div>")
-
-        # Score bar
-        if score is not None:
-            pct = _score_percent(score)
-            color = _score_color(score)
-            parts.append('<div class="score-bar-container">')
-            parts.append('<div class="score-bar-track">')
-            parts.append(
-                f'<div class="score-bar-fill" style="width:{pct:.1f}%;background:{color}"></div>'
-            )
-            parts.append("</div>")
-            parts.append(
-                f'<div class="score-label">{score:.1f} / 5.0</div>'
-            )
-            parts.append("</div>")
-
-        # Score explanation
-        if step.get("score_explanation"):
-            parts.append(
-                f'<div class="explanation">{_esc(step["score_explanation"])}</div>'
-            )
-
-        # Error message
-        if is_error:
-            parts.append(
-                f'<div class="bottleneck-callout">Error: {_esc(step["error"])}</div>'
-            )
-
-        # Collapsible I/O
-        parts.append('<div class="collapsible">&#9654; Show Input / Output</div>')
-        parts.append('<div class="collapsible-content">')
-        if step.get("input_data"):
-            parts.append(f'<div class="io-block"><strong>Input:</strong>\n{_esc(step["input_data"])}</div>')
-        if step.get("output_data"):
-            parts.append(f'<div class="io-block"><strong>Output:</strong>\n{_esc(step["output_data"])}</div>')
-        parts.append("</div>")
-
-        parts.append("</div>")
-
-    parts.append("</div>")
+    parts = [
+        '<h2>Step-by-Step Timeline</h2>',
+        '<div class="timeline">',
+        *(
+            _build_step_html(step, step["step_index"] in bottleneck_indices)
+            for step in steps
+        ),
+        '</div>',
+    ]
     return "\n".join(parts)
 
 
@@ -296,12 +292,10 @@ def _build_bottleneck_html(bottlenecks: list[dict[str, Any]]) -> str:
 
     parts = ['<h2>Bottleneck Analysis</h2>']
     for bn in bottlenecks:
-        color = _score_color(bn["score"])
-        impact = bn["impact"]
         parts.append(
             f'<div class="bottleneck-callout" style="margin-bottom:10px">'
             f'<strong>{_esc(bn["step_name"])}</strong> '
-            f'<span class="badge badge-bottleneck">{_esc(impact)}</span> '
+            f'<span class="badge badge-bottleneck">{_esc(bn["impact"])}</span> '
             f'&mdash; Score: {bn["score"]:.1f}/5, '
             f'Latency: {_fmt_latency(bn["latency_ms"])}<br>'
             f'{_esc(bn["explanation"])}'
