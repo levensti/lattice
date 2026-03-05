@@ -14,6 +14,9 @@ class AgentTraceConfig(BaseModel):
     judge_api_key: str | None = None
     judge_api_base: str = "https://api.openai.com/v1"
     judge_max_concurrency: int = 5
+    judge_max_retries: int = 3
+    judge_retry_base_delay: float = 1.0
+    judge_retry_max_delay: float = 30.0
 
 
 _config: AgentTraceConfig | None = None
