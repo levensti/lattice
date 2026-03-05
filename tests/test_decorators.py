@@ -2,7 +2,14 @@ import asyncio
 
 import pytest
 
-from agent_trace import trace_agent, trace_tool, trace_session
+from agent_trace import (
+    TraceSession,
+    get_current_session,
+    trace_agent,
+    trace_pipeline,
+    trace_session,
+    trace_tool,
+)
 
 
 def test_sync_agent_recorded():
@@ -115,3 +122,334 @@ def test_async_agent_recorded():
     assert result == "Hi, Bob!"
     assert len(session.steps) == 1
     assert session.steps[0].name == "async_greeter"
+
+
+# ── trace_pipeline tests ──────────────────────────────────────────────
+
+
+def test_pipeline_sync_returns_result_and_session():
+    """trace_pipeline creates a session and returns (result, session)."""
+
+    @trace_pipeline(name="my_pipe", criteria="Must work")
+    def run(x: int) -> int:
+        return x + 1
+
+    result, session = run(10)
+
+    assert result == 11
+    assert isinstance(session, TraceSession)
+    assert len(session.steps) == 1
+    step = session.steps[0]
+    assert step.name == "my_pipe"
+    assert step.step_type == "pipeline"
+    assert step.criteria == "Must work"
+    assert "10" in step.input_data
+    assert "11" in step.output_data
+    assert step.latency_ms >= 0
+    assert step.error is None
+    assert step.parent_span_id is None
+
+
+def test_pipeline_async_returns_result_and_session():
+    """trace_pipeline works with async functions."""
+
+    @trace_pipeline(name="async_pipe", criteria="Async must work")
+    async def run(msg: str) -> str:
+        return f"done: {msg}"
+
+    async def _go():
+        return await run("hello")
+
+    result, session = asyncio.run(_go())
+
+    assert result == "done: hello"
+    assert len(session.steps) == 1
+    step = session.steps[0]
+    assert step.name == "async_pipe"
+    assert step.step_type == "pipeline"
+    assert step.error is None
+
+
+def test_pipeline_captures_inner_steps():
+    """Decorated agents/tools inside a pipeline are recorded in the session."""
+
+    @trace_agent(name="inner_agent", criteria="inner")
+    def agent_fn(x: int) -> int:
+        return x * 2
+
+    @trace_tool(name="inner_tool", criteria="inner tool")
+    def tool_fn(x: int) -> int:
+        return x + 10
+
+    @trace_pipeline(name="full_pipe")
+    def run(x: int) -> int:
+        a = agent_fn(x)
+        return tool_fn(a)
+
+    result, session = run(5)
+
+    assert result == 20
+    # pipeline step + agent step + tool step
+    assert len(session.steps) == 3
+    names = [s.name for s in session.steps]
+    assert "inner_agent" in names
+    assert "inner_tool" in names
+    assert "full_pipe" in names
+
+
+def test_pipeline_inner_steps_parented_to_pipeline():
+    """Inner agent/tool steps have the pipeline span as their parent."""
+
+    @trace_agent(name="child", criteria="c")
+    def child_fn() -> str:
+        return "ok"
+
+    @trace_pipeline(name="parent_pipe")
+    def run() -> str:
+        return child_fn()
+
+    result, session = run()
+
+    assert result == "ok"
+    pipe_step = next(s for s in session.steps if s.name == "parent_pipe")
+    child_step = next(s for s in session.steps if s.name == "child")
+    assert child_step.parent_span_id == pipe_step.span_id
+
+
+def test_pipeline_error_propagates_and_records_step():
+    """Errors inside a pipeline propagate and the pipeline step records the error."""
+
+    @trace_agent(name="ok_agent", criteria="c")
+    def ok_fn() -> str:
+        return "fine"
+
+    @trace_agent(name="bad_agent", criteria="c")
+    def bad_fn() -> str:
+        raise ValueError("agent failed")
+
+    @trace_pipeline(name="err_pipe", criteria="Should not fail")
+    def run() -> str:
+        ok_fn()
+        return bad_fn()
+
+    with pytest.raises(ValueError, match="agent failed") as exc_info:
+        run()
+
+    session = exc_info.value.__trace_session__
+    # The ok_agent step, the bad_agent error step, and the pipeline error step
+    assert len(session.steps) == 3
+    pipe_step = next(s for s in session.steps if s.name == "err_pipe")
+    assert pipe_step.step_type == "pipeline"
+    assert pipe_step.error == "agent failed"
+    bad_step = next(s for s in session.steps if s.name == "bad_agent")
+    assert bad_step.error == "agent failed"
+    ok_step = next(s for s in session.steps if s.name == "ok_agent")
+    assert ok_step.error is None
+
+
+def test_pipeline_custom_trace_id():
+    """trace_pipeline accepts a custom trace_id."""
+
+    @trace_pipeline(name="id_pipe", trace_id="custom-123")
+    def run() -> str:
+        return "ok"
+
+    result, session = run()
+    assert result == "ok"
+    assert session.trace_id == "custom-123"
+
+
+def test_pipeline_description_recorded():
+    """trace_pipeline records the description on the pipeline step."""
+
+    @trace_pipeline(name="desc_pipe", description="A described pipeline")
+    def run() -> str:
+        return "ok"
+
+    result, session = run()
+    step = next(s for s in session.steps if s.name == "desc_pipe")
+    assert step.description == "A described pipeline"
+
+
+def test_pipeline_no_context_leak():
+    """After a pipeline call, no session leaks into subsequent code."""
+
+    @trace_pipeline(name="leak_test")
+    def run() -> str:
+        return "done"
+
+    run()
+
+    assert get_current_session() is None
+
+
+def test_pipeline_async_captures_inner_steps():
+    """Async pipeline captures inner async agent steps."""
+
+    @trace_agent(name="async_inner", criteria="c")
+    async def inner(x: int) -> int:
+        return x + 1
+
+    @trace_pipeline(name="async_full_pipe")
+    async def run(x: int) -> int:
+        return await inner(x)
+
+    async def _go():
+        return await run(5)
+
+    result, session = asyncio.run(_go())
+
+    assert result == 6
+    assert len(session.steps) == 2
+    names = [s.name for s in session.steps]
+    assert "async_inner" in names
+    assert "async_full_pipe" in names
+
+
+def test_pipeline_step_ordering():
+    """Pipeline step index is 0 (claimed first) but recorded last (finishes last)."""
+
+    @trace_agent(name="first", criteria="c")
+    def first() -> str:
+        return "1"
+
+    @trace_agent(name="second", criteria="c")
+    def second() -> str:
+        return "2"
+
+    @trace_pipeline(name="ordered_pipe")
+    def run() -> str:
+        first()
+        return second()
+
+    result, session = run()
+
+    assert result == "2"
+    # Pipeline step is appended last since it completes after inner steps
+    assert session.steps[-1].name == "ordered_pipe"
+    # Pipeline claims index 0, inner steps get 1 and 2
+    pipe_step = next(s for s in session.steps if s.name == "ordered_pipe")
+    assert pipe_step.step_index == 0
+    # Inner steps are ordered sequentially
+    inner_indices = [s.step_index for s in session.steps if s.name != "ordered_pipe"]
+    assert inner_indices == [1, 2]
+
+
+def test_pipeline_error_attaches_session_to_exception():
+    """On error, the session is accessible via exc.__trace_session__."""
+
+    @trace_agent(name="ok_step", criteria="c")
+    def ok_fn() -> str:
+        return "fine"
+
+    @trace_pipeline(name="attach_pipe")
+    def run() -> str:
+        ok_fn()
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom") as exc_info:
+        run()
+
+    session = exc_info.value.__trace_session__
+    assert isinstance(session, TraceSession)
+    assert len(session.steps) == 2
+    pipe_step = next(s for s in session.steps if s.name == "attach_pipe")
+    assert pipe_step.error == "boom"
+    ok_step = next(s for s in session.steps if s.name == "ok_step")
+    assert ok_step.error is None
+
+
+def test_pipeline_nested_creates_isolated_sessions():
+    """Nested trace_pipeline calls create independent sessions."""
+
+    @trace_agent(name="inner_agent", criteria="c")
+    def inner_agent_fn() -> str:
+        return "inner"
+
+    @trace_agent(name="outer_agent", criteria="c")
+    def outer_agent_fn() -> str:
+        return "outer"
+
+    @trace_pipeline(name="inner_pipe")
+    def inner_run() -> str:
+        return inner_agent_fn()
+
+    @trace_pipeline(name="outer_pipe")
+    def outer_run() -> str:
+        outer_agent_fn()
+        inner_result, inner_session = inner_run()
+        return inner_result
+
+    result, outer_session = outer_run()
+
+    assert result == "inner"
+    # Outer session has: outer_agent + outer_pipe steps only
+    outer_names = [s.name for s in outer_session.steps]
+    assert "outer_agent" in outer_names
+    assert "outer_pipe" in outer_names
+    # Inner agent is NOT in the outer session (it's in the inner session)
+    assert "inner_agent" not in outer_names
+    assert "inner_pipe" not in outer_names
+
+
+def test_pipeline_inside_trace_session():
+    """A trace_pipeline inside a trace_session creates its own session."""
+
+    @trace_agent(name="before", criteria="c")
+    def before_fn() -> str:
+        return "before"
+
+    @trace_agent(name="inside_pipe_agent", criteria="c")
+    def inside_fn() -> str:
+        return "inside"
+
+    @trace_pipeline(name="nested_pipe")
+    def pipe_fn() -> str:
+        return inside_fn()
+
+    with trace_session() as outer_session:
+        before_fn()
+        pipe_result, pipe_session = pipe_fn()
+
+    # Outer session only has the 'before' step
+    assert len(outer_session.steps) == 1
+    assert outer_session.steps[0].name == "before"
+
+    # Pipeline session has its own steps
+    pipe_names = [s.name for s in pipe_session.steps]
+    assert "inside_pipe_agent" in pipe_names
+    assert "nested_pipe" in pipe_names
+
+    # Sessions are distinct
+    assert outer_session.trace_id != pipe_session.trace_id
+
+
+def test_pipeline_async_concurrent():
+    """Concurrent async pipelines maintain isolated sessions."""
+
+    @trace_agent(name="worker", criteria="c")
+    async def worker(tag: str) -> str:
+        return f"done-{tag}"
+
+    @trace_pipeline(name="concurrent_pipe")
+    async def run(tag: str) -> str:
+        return await worker(tag)
+
+    async def _go():
+        results = await asyncio.gather(run("a"), run("b"), run("c"))
+        return results
+
+    results = asyncio.run(_go())
+
+    # Each result is (value, session)
+    assert len(results) == 3
+    tags = set()
+    for value, session in results:
+        assert isinstance(session, TraceSession)
+        assert len(session.steps) == 2  # worker + pipeline
+        tags.add(value)
+        # Each session is independent
+        pipe_step = next(s for s in session.steps if s.name == "concurrent_pipe")
+        assert pipe_step.step_type == "pipeline"
+
+    assert tags == {"done-a", "done-b", "done-c"}
