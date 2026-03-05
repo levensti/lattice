@@ -4,6 +4,7 @@ from .bottleneck import BottleneckResult, find_bottlenecks
 from .config import AgentTraceConfig, configure, get_config
 from .context import StepRecord, TraceSession, get_current_session, trace_session
 from .decorators import trace_agent, trace_tool
+from .export import export_html, export_json
 from .judge.scorer import async_score_trace, score_trace
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "TraceSession",
     "async_score_trace",
     "configure",
+    "export_html",
+    "export_json",
     "find_bottlenecks",
     "get_config",
     "get_current_session",

@@ -41,6 +41,21 @@ class TraceSession:
     def add_step(self, step: StepRecord) -> None:
         self.steps.append(step)
 
+    def export_json(self, indent: int = 2) -> str:
+        """Return the session as a formatted JSON string.
+
+        The output includes a summary, all steps, and bottleneck analysis.
+        """
+        from .export import export_json
+
+        return export_json(self, indent=indent)
+
+    def export_html(self) -> str:
+        """Return a self-contained HTML report with timeline, heatmap, and bottleneck callouts."""
+        from .export import export_html
+
+        return export_html(self)
+
 
 _current_session: ContextVar[TraceSession | None] = ContextVar(
     "agent_trace_session", default=None
