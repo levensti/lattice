@@ -90,22 +90,29 @@ class BaseJudgeProvider(ABC):
     # -- resource management --
 
     def close(self) -> None:
-        """Close underlying HTTP clients and release connection pools."""
-        if self._sync_client is not None:
-            self._sync_client.close()
-            self._sync_client = None
-        if self._async_client is not None:
-            self._async_client.close()
+        """Close underlying HTTP clients and release connection pools.
+
+        Only the synchronous client can be properly closed here.  The async
+        client requires ``await aclose()`` or an ``async with`` block.
+        """
+        try:
+            if self._sync_client is not None:
+                self._sync_client.close()
+                self._sync_client = None
+        finally:
+            # Cannot await in a sync method, so just discard the reference.
             self._async_client = None
 
     async def aclose(self) -> None:
         """Async close underlying HTTP clients and release connection pools."""
-        if self._sync_client is not None:
-            self._sync_client.close()
-            self._sync_client = None
-        if self._async_client is not None:
-            await self._async_client.aclose()
-            self._async_client = None
+        try:
+            if self._sync_client is not None:
+                self._sync_client.close()
+                self._sync_client = None
+        finally:
+            if self._async_client is not None:
+                await self._async_client.aclose()
+                self._async_client = None
 
     def __enter__(self) -> BaseJudgeProvider:
         return self
