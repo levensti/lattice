@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+
+logger = logging.getLogger("agent_trace")
 
 
 @dataclass
@@ -54,6 +57,7 @@ _current_span_id: ContextVar[str | None] = ContextVar(
 def trace_session(trace_id: str | None = None):
     """Context manager that groups decorated calls into a single trace."""
     session = TraceSession(trace_id=trace_id or uuid.uuid4().hex)
+    logger.info("Trace session started (trace_id=%s)", session.trace_id)
     session_token = _current_session.set(session)
     span_token = _current_span_id.set(None)
     try:
@@ -61,6 +65,11 @@ def trace_session(trace_id: str | None = None):
     finally:
         _current_session.reset(session_token)
         _current_span_id.reset(span_token)
+        logger.info(
+            "Trace session ended (trace_id=%s, steps=%d)",
+            session.trace_id,
+            len(session.steps),
+        )
 
 
 def get_current_session() -> TraceSession | None:

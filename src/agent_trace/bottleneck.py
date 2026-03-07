@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from .context import TraceSession
+
+logger = logging.getLogger("agent_trace")
 
 
 @dataclass
@@ -51,6 +54,11 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
         ))
 
     results.sort(key=lambda r: (r.score, -r.latency_ms))
+    for r in results:
+        logger.info(
+            "Bottleneck: %s (score=%.1f, impact=%s, %.1fms)",
+            r.step_name, r.score, r.impact, r.latency_ms,
+        )
     return results
 
 

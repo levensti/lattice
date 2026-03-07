@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+import logging
 import time
 import uuid
 from typing import Any, Callable, Sequence
@@ -13,6 +14,8 @@ from .context import (
     _current_span_id,
 )
 from .otel import traced_span
+
+logger = logging.getLogger("agent_trace")
 
 
 def _safe_serialize(obj: Any, max_length: int = 8192) -> str:
@@ -81,6 +84,8 @@ def _trace_decorator(
             }
             if tags:
                 otel_attrs["agent_trace.tags"] = ",".join(tags)
+            logger.info("Step started: %s", name)
+            logger.debug("Step %s input: %s", name, input_str[:500])
             try:
                 with traced_span(f"step:{name}", otel_attrs) as span:
                     result = func(*args, **kwargs)
@@ -98,9 +103,12 @@ def _trace_decorator(
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
                         )
+                    logger.info("Step completed: %s (%.1fms)", name, latency)
+                    logger.debug("Step %s output: %s", name, output_str[:500])
                     return result
             except Exception as exc:
                 latency = (time.perf_counter() - start) * 1000
+                logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
                 if session:
                     _record_step(
                         session,
@@ -130,6 +138,8 @@ def _trace_decorator(
             }
             if tags:
                 otel_attrs["agent_trace.tags"] = ",".join(tags)
+            logger.info("Step started: %s", name)
+            logger.debug("Step %s input: %s", name, input_str[:500])
             try:
                 with traced_span(f"step:{name}", otel_attrs) as span:
                     result = await func(*args, **kwargs)
@@ -147,9 +157,12 @@ def _trace_decorator(
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
                         )
+                    logger.info("Step completed: %s (%.1fms)", name, latency)
+                    logger.debug("Step %s output: %s", name, output_str[:500])
                     return result
             except Exception as exc:
                 latency = (time.perf_counter() - start) * 1000
+                logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
                 if session:
                     _record_step(
                         session,

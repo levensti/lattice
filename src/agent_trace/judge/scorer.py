@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 
@@ -9,6 +10,8 @@ from ..config import get_config
 from ..context import StepRecord, TraceSession
 from .prompt_builder import JUDGE_SYSTEM_PROMPT, build_judge_prompt
 from .providers import create_provider
+
+logger = logging.getLogger("agent_trace")
 
 
 def _parse_judge_response(text: str) -> tuple[float, str]:
@@ -53,13 +56,17 @@ def _build_prompt_for_step(step: StepRecord) -> str:
 
 
 def _score_single_step(step: StepRecord, provider: Any) -> None:
+    logger.info("Scoring step: %s", step.name)
     raw = provider.judge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
     step.score, step.score_explanation = _parse_judge_response(raw)
+    logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
 
 async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
+    logger.info("Scoring step: %s", step.name)
     raw = await provider.ajudge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
     step.score, step.score_explanation = _parse_judge_response(raw)
+    logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
 
 def _get_provider(provider: Any | None):
