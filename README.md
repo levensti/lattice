@@ -1,10 +1,10 @@
 # agent-trace
 
-Quality debugging framework for multi-agent systems. Find out **which agent step is the bottleneck** in your pipeline.
+Quality debugging framework for multi-agent systems. Find out **which step is the bottleneck** in your pipeline.
 
 agent-trace gives you:
 
-- **Decorators** (`@trace_agent`, `@trace_tool`) to annotate every step with a name, description, and quality criteria
+- **A single decorator** (`@step`) to annotate every step with a name, description, and quality criteria
 - **OpenTelemetry integration** — inputs, outputs, and timing are exported as spans
 - **Automatic LLM-based scoring** — each step is judged against its criteria without you writing evaluation prompts
 - **Bottleneck analysis** — steps are ranked by quality so you can pinpoint the weakest link
@@ -21,11 +21,11 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-from agent_trace import configure, trace_agent, trace_session, score_trace, find_bottlenecks
+from agent_trace import configure, step, trace_session, score_trace, find_bottlenecks
 
 configure(judge_model="gpt-4o")  # uses OPENAI_API_KEY env var
 
-@trace_agent(
+@step(
     name="researcher",
     description="Researches a topic using web search",
     criteria="Must return at least 3 factual claims with sources",
@@ -33,10 +33,11 @@ configure(judge_model="gpt-4o")  # uses OPENAI_API_KEY env var
 def researcher(topic: str) -> str:
     return call_llm(f"Research {topic}")
 
-@trace_agent(
+@step(
     name="writer",
     description="Writes an article from research notes",
     criteria="Must have introduction, body, and conclusion",
+    tags=["llm"],
 )
 def writer(notes: str) -> str:
     return call_llm(f"Write article from: {notes}")
@@ -71,17 +72,14 @@ configure(
 )
 ```
 
-### Decorators
+### The `@step` Decorator
 
 ```python
-@trace_agent(name="planner", description="...", criteria="...")
-def my_agent(input: str) -> str: ...
-
-@trace_tool(name="search", description="...", criteria="...")
-def my_tool(query: str) -> list: ...
+@step(name="planner", description="...", criteria="...", tags=["llm"])
+def my_step(input: str) -> str: ...
 ```
 
-Both decorators support sync and async functions. Parameters:
+Supports sync and async functions. Parameters:
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
@@ -89,13 +87,18 @@ Both decorators support sync and async functions. Parameters:
 | `description` | no | What this step does |
 | `criteria` | no | Quality criteria for the judge |
 | `step_id` | no | Custom ID (auto-generated if omitted) |
+| `tags` | no | Labels for grouping/filtering (e.g. `["llm", "io"]`) |
+
+The framework automatically tracks parent-child relationships from the call graph — no need to distinguish between "agents" and "tools".
+
+> **Migrating from `@trace_agent` / `@trace_tool`**: Both old decorators still work and now accept a `tags` parameter. Replace them with `@step` at your convenience.
 
 ### Session Management
 
 ```python
 with trace_session() as session:
     # all decorated calls here are recorded into `session`
-    result = my_agent("hello")
+    result = my_step("hello")
 
 print(session.steps)  # list of StepRecord
 ```
@@ -126,7 +129,7 @@ for b in bottlenecks:
 
 ## How It Works
 
-1. **Trace**: Decorators capture inputs, outputs, timing, and parent-child relationships for each step, emitting OpenTelemetry spans.
+1. **Trace**: The `@step` decorator captures inputs, outputs, timing, and parent-child relationships for each step, emitting OpenTelemetry spans.
 
 2. **Score**: `score_trace()` sends each step's input, output, and criteria to an LLM judge that rates quality 1–5. The judge prompt is auto-generated from your `criteria` string — you don't need to write evaluation prompts.
 
@@ -137,12 +140,13 @@ for b in bottlenecks:
 agent-trace creates standard OTel spans with these custom attributes:
 
 - `agent_trace.name` — step name
-- `agent_trace.type` — `"agent"` or `"tool"`
+- `agent_trace.type` — `"step"` (or `"agent"` / `"tool"` when using legacy decorators)
 - `agent_trace.input` — serialized input
 - `agent_trace.output` — serialized output
 - `agent_trace.latency_ms` — wall-clock time in milliseconds
+- `agent_trace.tags` — comma-separated tags (when provided)
 
-Spans nest automatically: if agent A calls tool B, the tool span is a child of the agent span.
+Spans nest automatically based on the call graph.
 
 If `opentelemetry-sdk` is not installed, the decorators still work — you just won't get OTel spans.
 

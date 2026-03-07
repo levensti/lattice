@@ -1,7 +1,7 @@
 """Example: Multi-agent pipeline with agent-trace quality debugging.
 
-Simulates a research → write → edit pipeline and shows how to trace,
-score, and find bottlenecks.
+Simulates a research -> write -> edit pipeline and shows how to trace,
+score, and find bottlenecks using the unified ``@step`` decorator.
 
 Usage:
     export OPENAI_API_KEY=sk-...
@@ -12,9 +12,8 @@ from agent_trace import (
     configure,
     find_bottlenecks,
     score_trace,
-    trace_agent,
+    step,
     trace_session,
-    trace_tool,
 )
 
 configure(
@@ -23,10 +22,11 @@ configure(
 )
 
 
-@trace_tool(
+@step(
     name="web_search",
     description="Search the web for information",
     criteria="Must return results relevant to the query with at least 2 distinct sources",
+    tags=["io", "external"],
 )
 def web_search(query: str) -> list[dict]:
     return [
@@ -35,10 +35,11 @@ def web_search(query: str) -> list[dict]:
     ]
 
 
-@trace_agent(
+@step(
     name="researcher",
     description="Researches a topic by searching and summarizing findings",
     criteria="Must synthesize information from multiple sources into a coherent summary with citations",
+    tags=["llm"],
 )
 def researcher(topic: str) -> str:
     results = web_search(topic)
@@ -46,20 +47,22 @@ def researcher(topic: str) -> str:
     return f"Research on '{topic}': Based on {sources}, Python is a versatile language."
 
 
-@trace_agent(
+@step(
     name="writer",
     description="Writes a polished article from research notes",
     criteria="Must produce a well-structured article with introduction, body, and conclusion",
+    tags=["llm"],
 )
 def writer(research: str) -> str:
     # Intentionally weak output to demonstrate bottleneck detection
     return "Python is good."
 
 
-@trace_agent(
+@step(
     name="editor",
     description="Reviews and improves the article",
     criteria="Must fix grammar, improve clarity, and ensure the article is publication-ready",
+    tags=["llm"],
 )
 def editor(article: str) -> str:
     return (
@@ -81,8 +84,8 @@ def main():
         score_trace(session)
 
         print("=== Step Scores ===")
-        for step in session.steps:
-            print(f"  [{step.step_index}] {step.name}: {step.score}/5 — {step.score_explanation}")
+        for s in session.steps:
+            print(f"  [{s.step_index}] {s.name}: {s.score}/5 — {s.score_explanation}")
 
         print("\n=== Bottleneck Analysis ===")
         for b in find_bottlenecks(session):
