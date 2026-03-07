@@ -36,6 +36,8 @@ class TraceSession:
     workflow_name: str = ""
     goal: str = ""
     steps: list[StepRecord] = field(default_factory=list)
+    session_score: float | None = field(default=None)
+    session_score_explanation: str | None = field(default=None)
     _step_counter: int = field(default=0, repr=False)
 
     def next_index(self) -> int:

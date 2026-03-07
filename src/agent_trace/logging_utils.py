@@ -80,4 +80,8 @@ def print_trace_summary(session: TraceSession) -> None:
     total_ms = sum(s.latency_ms for s in steps)
     print(f"{'-' * 60}")
     print(f"  Total steps: {len(steps)}  |  Total time: {total_ms:.0f}ms")
+    if session.session_score is not None:
+        print(f"  Session score: {session.session_score:.1f}/5")
+        if session.session_score_explanation:
+            print(f"  Verdict: {session.session_score_explanation}")
     print(f"{'=' * 60}\n")

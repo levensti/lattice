@@ -16,27 +16,12 @@ def build_judge_prompt(
     goal: str,
     input_data: str,
     output_data: str,
-    workflow_goal: str = "",
 ) -> str:
-    """Build the user prompt sent to the judge LLM.
-
-    Args:
-        name: Step name.
-        description: What this step does.
-        goal: What success looks like for this step.
-        input_data: Serialized input to the step.
-        output_data: Serialized output from the step.
-        workflow_goal: The overall session goal (provides context).
-    """
+    """Build the user prompt sent to the judge LLM for a single step."""
     goal_block = goal or "Assess overall quality, relevance, and correctness."
-
-    workflow_context = ""
-    if workflow_goal:
-        workflow_context = f"**Workflow goal:** {workflow_goal}\n\n"
 
     return (
         f"Evaluate the following step output.\n\n"
-        f"{workflow_context}"
         f"**Step name:** {name}\n"
         f"**Description:** {description or 'No description provided.'}\n\n"
         f"**Step goal:**\n{goal_block}\n\n"
@@ -48,6 +33,31 @@ def build_judge_prompt(
         f"  3 = Acceptable but with notable gaps\n"
         f"  4 = Good with only minor issues\n"
         f"  5 = Excellent, fully meets the goal\n\n"
+        f'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
+        f'{{"score": <number 1-5>, "explanation": "<one or two sentences>"}}'
+    )
+
+
+def build_session_judge_prompt(
+    *,
+    goal: str,
+    final_output: str,
+    workflow_name: str = "",
+) -> str:
+    """Build the user prompt for judging the overall session outcome."""
+    name_line = f"**Workflow:** {workflow_name}\n" if workflow_name else ""
+
+    return (
+        f"Evaluate whether the following workflow achieved its goal.\n\n"
+        f"{name_line}"
+        f"**Goal:** {goal}\n\n"
+        f"**Final output:**\n{final_output[:MAX_FIELD_CHARS]}\n\n"
+        f"Rate how well the final output achieves the goal on a scale of 1 to 5:\n"
+        f"  1 = Completely fails the goal\n"
+        f"  2 = Major issues, mostly unusable\n"
+        f"  3 = Acceptable but with notable gaps\n"
+        f"  4 = Good with only minor issues\n"
+        f"  5 = Excellent, fully achieves the goal\n\n"
         f'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
         f'{{"score": <number 1-5>, "explanation": "<one or two sentences>"}}'
     )
