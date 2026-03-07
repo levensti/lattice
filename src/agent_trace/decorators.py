@@ -38,14 +38,13 @@ def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
 
 
 def _record_step(
-    session, *, span_id, name, step_type, description, criteria,
+    session, *, span_id, name, description, criteria,
     input_data, output_data, step_index, latency_ms, parent_span_id,
     tags, error=None,
 ):
     session.add_step(StepRecord(
         span_id=span_id,
         name=name,
-        step_type=step_type,
         description=description,
         criteria=criteria,
         input_data=input_data,
@@ -60,7 +59,6 @@ def _record_step(
 
 def _trace_decorator(
     name: str,
-    step_type: str,
     description: str,
     criteria: str,
     step_id: str | None,
@@ -79,7 +77,6 @@ def _trace_decorator(
 
             otel_attrs = {
                 "agent_trace.name": name,
-                "agent_trace.type": step_type,
                 "agent_trace.input": input_str,
             }
             if tags:
@@ -95,7 +92,7 @@ def _trace_decorator(
                     if session:
                         _record_step(
                             session,
-                            span_id=span_id, name=name, step_type=step_type,
+                            span_id=span_id, name=name,
                             description=description, criteria=criteria,
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
@@ -107,7 +104,7 @@ def _trace_decorator(
                 if session:
                     _record_step(
                         session,
-                        span_id=span_id, name=name, step_type=step_type,
+                        span_id=span_id, name=name,
                         description=description, criteria=criteria,
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
@@ -129,7 +126,6 @@ def _trace_decorator(
 
             otel_attrs = {
                 "agent_trace.name": name,
-                "agent_trace.type": step_type,
                 "agent_trace.input": input_str,
             }
             if tags:
@@ -145,7 +141,7 @@ def _trace_decorator(
                     if session:
                         _record_step(
                             session,
-                            span_id=span_id, name=name, step_type=step_type,
+                            span_id=span_id, name=name,
                             description=description, criteria=criteria,
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
@@ -157,7 +153,7 @@ def _trace_decorator(
                 if session:
                     _record_step(
                         session,
-                        span_id=span_id, name=name, step_type=step_type,
+                        span_id=span_id, name=name,
                         description=description, criteria=criteria,
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
@@ -195,32 +191,4 @@ def step(
         step_id: Custom span ID (auto-generated if omitted).
         tags: Optional labels for grouping/filtering (e.g. ["llm", "io"]).
     """
-    return _trace_decorator(name, "step", description, criteria, step_id, tags)
-
-
-# ---------------------------------------------------------------------------
-# Backwards-compatible aliases
-# ---------------------------------------------------------------------------
-
-def trace_agent(
-    name: str,
-    *,
-    description: str = "",
-    criteria: str = "",
-    step_id: str | None = None,
-    tags: Sequence[str] = (),
-) -> Callable:
-    """Decorator to trace an agent call. Prefer ``@step`` for new code."""
-    return _trace_decorator(name, "agent", description, criteria, step_id, tags)
-
-
-def trace_tool(
-    name: str,
-    *,
-    description: str = "",
-    criteria: str = "",
-    step_id: str | None = None,
-    tags: Sequence[str] = (),
-) -> Callable:
-    """Decorator to trace a tool call. Prefer ``@step`` for new code."""
-    return _trace_decorator(name, "tool", description, criteria, step_id, tags)
+    return _trace_decorator(name, description, criteria, step_id, tags)

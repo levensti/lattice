@@ -6,7 +6,6 @@ def _step(name, index, score=None, error=None, latency_ms=100.0):
     return StepRecord(
         span_id=f"span-{index}",
         name=name,
-        step_type="agent",
         description="",
         criteria="",
         input_data="",

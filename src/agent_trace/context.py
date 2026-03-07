@@ -12,7 +12,6 @@ class StepRecord:
 
     span_id: str
     name: str
-    step_type: str  # "agent" or "tool" (kept for backwards compat)
     description: str
     criteria: str
     input_data: str
