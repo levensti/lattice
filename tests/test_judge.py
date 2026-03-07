@@ -1,3 +1,4 @@
+from agent_trace.config import JudgeConfig, _merge_judge_configs
 from agent_trace.judge.prompt_builder import build_judge_prompt
 from agent_trace.judge.scorer import _parse_judge_response
 
@@ -53,3 +54,29 @@ def test_parse_failure():
     )
     assert score == 0.0
     assert "Could not parse" in explanation
+
+
+# ── JudgeConfig merge tests ──────────────────────────────────────────
+
+
+def test_merge_configs_first_non_none_wins():
+    step_cfg = JudgeConfig(model="step-model", temperature=0.9)
+    call_cfg = JudgeConfig(model="call-model", api_key="call-key")
+    global_cfg = JudgeConfig(model="global-model", api_key="global-key", provider="openai")
+
+    merged = _merge_judge_configs(step_cfg, call_cfg, global_cfg)
+    assert merged.model == "step-model"  # step wins
+    assert merged.temperature == 0.9  # step wins
+    assert merged.api_key == "call-key"  # call wins (step has None)
+    assert merged.provider == "openai"  # global wins (step+call have None)
+
+
+def test_merge_configs_skips_none_entries():
+    merged = _merge_judge_configs(None, None, JudgeConfig(api_key="fallback"))
+    assert merged.api_key == "fallback"
+
+
+def test_merge_configs_all_none():
+    merged = _merge_judge_configs(None, None, None)
+    assert merged.model is None
+    assert merged.api_key is None

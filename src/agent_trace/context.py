@@ -5,6 +5,10 @@ import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from .config import JudgeConfig
 
 logger = logging.getLogger("agent_trace")
 
@@ -26,6 +30,8 @@ class StepRecord:
     score_explanation: str | None = None
     error: str | None = None
     tags: list[str] = field(default_factory=list)
+    judge_config: JudgeConfig | None = field(default=None, repr=False)
+    output_serializer: Callable[[Any], str] | None = field(default=None, repr=False)
 
 
 @dataclass

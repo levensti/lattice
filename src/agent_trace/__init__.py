@@ -1,7 +1,7 @@
 """agent-trace: Quality debugging framework for multi-agent systems."""
 
 from .bottleneck import BottleneckResult, find_bottlenecks
-from .config import AgentTraceConfig, configure, get_config
+from .config import AgentTraceConfig, JudgeConfig, configure, get_config
 from .context import StepRecord, TraceSession, get_current_session, trace_session
 from .decorators import step
 from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
@@ -10,6 +10,7 @@ from .logging_utils import print_trace_summary
 __all__ = [
     "AgentTraceConfig",
     "BottleneckResult",
+    "JudgeConfig",
     "StepRecord",
     "TraceSession",
     "async_score_session",

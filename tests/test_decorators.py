@@ -113,3 +113,55 @@ def test_step_ordering():
 
     assert [s.name for s in session.steps] == ["step_a", "step_b", "step_c"]
     assert [s.step_index for s in session.steps] == [0, 1, 2]
+
+
+def test_output_serializer():
+    @step(
+        name="custom_output",
+        goal="Must serialize correctly",
+        output_serializer=lambda obj: f"custom:{obj['key']}",
+    )
+    def produce() -> dict:
+        return {"key": "value", "extra": [1, 2, 3]}
+
+    with trace_session() as session:
+        result = produce()
+
+    assert result == {"key": "value", "extra": [1, 2, 3]}
+    assert session.steps[0].output_data == "custom:value"
+
+
+def test_output_serializer_async():
+    @step(
+        name="async_custom_output",
+        goal="Must serialize correctly",
+        output_serializer=lambda obj: f"len={len(obj)}",
+    )
+    async def produce() -> list:
+        return [1, 2, 3]
+
+    async def _run():
+        with trace_session() as session:
+            result = await produce()
+        return result, session
+
+    result, session = asyncio.run(_run())
+    assert result == [1, 2, 3]
+    assert session.steps[0].output_data == "len=3"
+
+
+def test_step_with_judge_config():
+    from agent_trace import JudgeConfig
+
+    cfg = JudgeConfig(model="gpt-4o-mini", temperature=0.5)
+
+    @step(name="configured", goal="test", judge_config=cfg)
+    def do_work() -> str:
+        return "done"
+
+    with trace_session() as session:
+        do_work()
+
+    assert session.steps[0].judge_config is cfg
+    assert session.steps[0].judge_config.model == "gpt-4o-mini"
+    assert session.steps[0].judge_config.temperature == 0.5

@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import Any, Callable, Sequence
 
+from .config import JudgeConfig
 from .context import (
     StepRecord,
     _current_session,
@@ -43,7 +44,7 @@ def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
 def _record_step(
     session, *, span_id, name, description, goal,
     input_data, output_data, step_index, latency_ms, parent_span_id,
-    tags, error=None,
+    tags, error=None, judge_config=None, output_serializer=None,
 ):
     session.add_step(StepRecord(
         span_id=span_id,
@@ -57,6 +58,8 @@ def _record_step(
         parent_span_id=parent_span_id,
         error=error,
         tags=list(tags),
+        judge_config=judge_config,
+        output_serializer=output_serializer,
     ))
 
 
@@ -66,6 +69,8 @@ def _trace_decorator(
     goal: str,
     step_id: str | None,
     tags: Sequence[str],
+    judge_config: JudgeConfig | None,
+    output_serializer: Callable[[Any], str] | None,
 ):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
@@ -89,7 +94,10 @@ def _trace_decorator(
             try:
                 with traced_span(f"step:{name}", otel_attrs) as span:
                     result = func(*args, **kwargs)
-                    output_str = _safe_serialize(result)
+                    if output_serializer is not None:
+                        output_str = output_serializer(result)
+                    else:
+                        output_str = _safe_serialize(result)
                     latency = (time.perf_counter() - start) * 1000
                     if span is not None:
                         span.set_attribute("agent_trace.output", output_str[:4096])
@@ -102,6 +110,8 @@ def _trace_decorator(
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
+                            judge_config=judge_config,
+                            output_serializer=output_serializer,
                         )
                     logger.info("Step completed: %s (%.1fms)", name, latency)
                     logger.debug("Step %s output: %s", name, output_str[:500])
@@ -117,6 +127,8 @@ def _trace_decorator(
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
                         parent_span_id=parent_id, tags=tags, error=str(exc),
+                        judge_config=judge_config,
+                        output_serializer=output_serializer,
                     )
                 raise
             finally:
@@ -143,7 +155,10 @@ def _trace_decorator(
             try:
                 with traced_span(f"step:{name}", otel_attrs) as span:
                     result = await func(*args, **kwargs)
-                    output_str = _safe_serialize(result)
+                    if output_serializer is not None:
+                        output_str = output_serializer(result)
+                    else:
+                        output_str = _safe_serialize(result)
                     latency = (time.perf_counter() - start) * 1000
                     if span is not None:
                         span.set_attribute("agent_trace.output", output_str[:4096])
@@ -156,6 +171,8 @@ def _trace_decorator(
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
+                            judge_config=judge_config,
+                            output_serializer=output_serializer,
                         )
                     logger.info("Step completed: %s (%.1fms)", name, latency)
                     logger.debug("Step %s output: %s", name, output_str[:500])
@@ -171,6 +188,8 @@ def _trace_decorator(
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
                         parent_span_id=parent_id, tags=tags, error=str(exc),
+                        judge_config=judge_config,
+                        output_serializer=output_serializer,
                     )
                 raise
             finally:
@@ -190,6 +209,8 @@ def step(
     goal: str = "",
     step_id: str | None = None,
     tags: Sequence[str] = (),
+    judge_config: JudgeConfig | None = None,
+    output_serializer: Callable[[Any], str] | None = None,
 ) -> Callable:
     """Decorator to trace any step in a workflow with quality criteria.
 
@@ -203,5 +224,16 @@ def step(
         goal: What success looks like for this step — the judge evaluates against this.
         step_id: Custom span ID (auto-generated if omitted).
         tags: Optional labels for grouping/filtering (e.g. ["llm", "io"]).
+        judge_config: Per-step inference settings for the LLM judge.
+            Overrides both the global ``configure()`` defaults and any
+            config passed to ``score_trace()`` / ``score_session()``.
+        output_serializer: Custom function to convert the step's return
+            value into a string for the judge prompt.  Useful when the
+            output is an image, binary blob, or domain object that needs
+            special representation.  Receives the raw return value and
+            must return a ``str``.
     """
-    return _trace_decorator(name, description, goal, step_id, tags)
+    return _trace_decorator(
+        name, description, goal, step_id, tags,
+        judge_config, output_serializer,
+    )
