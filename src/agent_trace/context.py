@@ -33,6 +33,8 @@ class TraceSession:
     """Groups multiple traced steps into a single debugging session."""
 
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    workflow_name: str = ""
+    goal: str = ""
     steps: list[StepRecord] = field(default_factory=list)
     _step_counter: int = field(default=0, repr=False)
 
@@ -54,10 +56,25 @@ _current_span_id: ContextVar[str | None] = ContextVar(
 
 
 @contextmanager
-def trace_session(trace_id: str | None = None):
-    """Context manager that groups decorated calls into a single trace."""
-    session = TraceSession(trace_id=trace_id or uuid.uuid4().hex)
-    logger.info("Trace session started (trace_id=%s)", session.trace_id)
+def trace_session(
+    trace_id: str | None = None,
+    *,
+    workflow_name: str = "",
+    goal: str = "",
+):
+    """Context manager that groups decorated calls into a single trace.
+
+    Args:
+        trace_id: Custom trace ID (auto-generated if omitted).
+        workflow_name: Human-readable name for this workflow.
+        goal: The desired outcome — used for auto-judging results.
+    """
+    session = TraceSession(
+        trace_id=trace_id or uuid.uuid4().hex,
+        workflow_name=workflow_name,
+        goal=goal,
+    )
+    logger.info("Trace session started: %s (trace_id=%s)", workflow_name or "(unnamed)", session.trace_id)
     session_token = _current_session.set(session)
     span_token = _current_span_id.set(None)
     try:
