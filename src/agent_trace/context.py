@@ -8,11 +8,11 @@ from dataclasses import dataclass, field
 
 @dataclass
 class StepRecord:
-    """A single traced step (agent call or tool call) within a session."""
+    """A single traced step within a session."""
 
     span_id: str
     name: str
-    step_type: str  # "agent" or "tool"
+    step_type: str  # "agent" or "tool" (kept for backwards compat)
     description: str
     criteria: str
     input_data: str
@@ -23,6 +23,7 @@ class StepRecord:
     score: float | None = None
     score_explanation: str | None = None
     error: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
