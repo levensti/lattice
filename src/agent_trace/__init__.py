@@ -5,7 +5,7 @@ from .config import AgentTraceConfig, configure, get_config
 from .context import StepRecord, TraceSession, get_current_session, trace_session
 from .decorators import step
 from .judge.scorer import async_score_trace, score_trace
-from .logging_utils import configure_logging, print_trace_summary
+from .logging_utils import print_trace_summary
 
 __all__ = [
     "AgentTraceConfig",
@@ -14,7 +14,6 @@ __all__ = [
     "TraceSession",
     "async_score_trace",
     "configure",
-    "configure_logging",
     "find_bottlenecks",
     "get_config",
     "get_current_session",

@@ -9,25 +9,16 @@ from .context import TraceSession
 
 logger = logging.getLogger("agent_trace")
 
-
-def configure_logging(level: int | str = logging.INFO) -> None:
-    """Set up the ``agent_trace`` logger with a human-friendly console handler.
-
-    Call this once at startup to see real-time step output in your terminal.
-    If the logger already has handlers, this is a no-op so it won't duplicate
-    output when called multiple times.
-
-    Args:
-        level: Logging level (e.g. ``logging.DEBUG``, ``"INFO"``).
-    """
-    if logger.handlers:
-        return
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(
+# Auto-configure: attach a console handler so users get output for free.
+# Uses NullHandler-fallback pattern — if the user has already configured the
+# root logger or this logger, the duplicate-handler guard keeps things clean.
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(
         logging.Formatter("[%(levelname)s] %(name)s — %(message)s")
     )
-    logger.addHandler(handler)
-    logger.setLevel(level)
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 def print_trace_summary(session: TraceSession) -> None:
