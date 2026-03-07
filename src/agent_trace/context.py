@@ -16,7 +16,7 @@ class StepRecord:
     span_id: str
     name: str
     description: str
-    criteria: str
+    goal: str
     input_data: str
     output_data: str
     step_index: int

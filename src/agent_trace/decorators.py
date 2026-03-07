@@ -41,7 +41,7 @@ def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
 
 
 def _record_step(
-    session, *, span_id, name, description, criteria,
+    session, *, span_id, name, description, goal,
     input_data, output_data, step_index, latency_ms, parent_span_id,
     tags, error=None,
 ):
@@ -49,7 +49,7 @@ def _record_step(
         span_id=span_id,
         name=name,
         description=description,
-        criteria=criteria,
+        goal=goal,
         input_data=input_data,
         output_data=output_data,
         step_index=step_index,
@@ -63,7 +63,7 @@ def _record_step(
 def _trace_decorator(
     name: str,
     description: str,
-    criteria: str,
+    goal: str,
     step_id: str | None,
     tags: Sequence[str],
 ):
@@ -98,7 +98,7 @@ def _trace_decorator(
                         _record_step(
                             session,
                             span_id=span_id, name=name,
-                            description=description, criteria=criteria,
+                            description=description, goal=goal,
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
@@ -113,7 +113,7 @@ def _trace_decorator(
                     _record_step(
                         session,
                         span_id=span_id, name=name,
-                        description=description, criteria=criteria,
+                        description=description, goal=goal,
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
                         parent_span_id=parent_id, tags=tags, error=str(exc),
@@ -152,7 +152,7 @@ def _trace_decorator(
                         _record_step(
                             session,
                             span_id=span_id, name=name,
-                            description=description, criteria=criteria,
+                            description=description, goal=goal,
                             input_data=input_str, output_data=output_str,
                             step_index=step_index, latency_ms=latency,
                             parent_span_id=parent_id, tags=tags,
@@ -167,7 +167,7 @@ def _trace_decorator(
                     _record_step(
                         session,
                         span_id=span_id, name=name,
-                        description=description, criteria=criteria,
+                        description=description, goal=goal,
                         input_data=input_str, output_data="",
                         step_index=step_index, latency_ms=latency,
                         parent_span_id=parent_id, tags=tags, error=str(exc),
@@ -187,7 +187,7 @@ def step(
     name: str,
     *,
     description: str = "",
-    criteria: str = "",
+    goal: str = "",
     step_id: str | None = None,
     tags: Sequence[str] = (),
 ) -> Callable:
@@ -200,8 +200,8 @@ def step(
     Args:
         name: Human-readable step name.
         description: What this step does.
-        criteria: Quality criteria the judge will evaluate against.
+        goal: What success looks like for this step — the judge evaluates against this.
         step_id: Custom span ID (auto-generated if omitted).
         tags: Optional labels for grouping/filtering (e.g. ["llm", "io"]).
     """
-    return _trace_decorator(name, description, criteria, step_id, tags)
+    return _trace_decorator(name, description, goal, step_id, tags)

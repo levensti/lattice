@@ -45,26 +45,27 @@ def _parse_judge_response(text: str) -> tuple[float, str]:
     return 0.0, f"Could not parse judge response: {text[:200]}"
 
 
-def _build_prompt_for_step(step: StepRecord) -> str:
+def _build_prompt_for_step(step: StepRecord, workflow_goal: str = "") -> str:
     return build_judge_prompt(
         name=step.name,
         description=step.description,
-        criteria=step.criteria,
+        goal=step.goal,
         input_data=step.input_data,
         output_data=step.output_data,
+        workflow_goal=workflow_goal,
     )
 
 
-def _score_single_step(step: StepRecord, provider: Any) -> None:
+def _score_single_step(step: StepRecord, provider: Any, workflow_goal: str = "") -> None:
     logger.info("Scoring step: %s", step.name)
-    raw = provider.judge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
+    raw = provider.judge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step, workflow_goal))
     step.score, step.score_explanation = _parse_judge_response(raw)
     logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
 
-async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
+async def _async_score_single_step(step: StepRecord, provider: Any, workflow_goal: str = "") -> None:
     logger.info("Scoring step: %s", step.name)
-    raw = await provider.ajudge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
+    raw = await provider.ajudge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step, workflow_goal))
     step.score, step.score_explanation = _parse_judge_response(raw)
     logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
@@ -88,11 +89,16 @@ def score_trace(
     *,
     provider: Any | None = None,
 ) -> list[StepRecord]:
-    """Score every step in the session synchronously. Updates steps in place."""
+    """Score every step in the session synchronously. Updates steps in place.
+
+    If the session has a ``goal``, it is included in each step's judge prompt
+    so the judge can evaluate steps in the context of the overall workflow.
+    """
     prov = _get_provider(provider)
+    wg = session.goal
     for step in session.steps:
         if step.error is None:
-            _score_single_step(step, prov)
+            _score_single_step(step, prov, wg)
     return session.steps
 
 
@@ -102,14 +108,19 @@ async def async_score_trace(
     provider: Any | None = None,
     max_concurrency: int = 5,
 ) -> list[StepRecord]:
-    """Score every step concurrently. Updates steps in place."""
+    """Score every step concurrently. Updates steps in place.
+
+    If the session has a ``goal``, it is included in each step's judge prompt
+    so the judge can evaluate steps in the context of the overall workflow.
+    """
     prov = _get_provider(provider)
+    wg = session.goal
     sem = asyncio.Semaphore(max_concurrency)
     scorable = [s for s in session.steps if s.error is None]
 
     async def _bounded(step: StepRecord) -> None:
         async with sem:
-            await _async_score_single_step(step, prov)
+            await _async_score_single_step(step, prov, wg)
 
     await asyncio.gather(*[_bounded(s) for s in scorable])
     return session.steps
