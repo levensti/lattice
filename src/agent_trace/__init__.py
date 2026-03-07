@@ -4,18 +4,22 @@ from .bottleneck import BottleneckResult, find_bottlenecks
 from .config import AgentTraceConfig, configure, get_config
 from .context import StepRecord, TraceSession, get_current_session, trace_session
 from .decorators import step
-from .judge.scorer import async_score_trace, score_trace
+from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
+from .logging_utils import print_trace_summary
 
 __all__ = [
     "AgentTraceConfig",
     "BottleneckResult",
     "StepRecord",
     "TraceSession",
+    "async_score_session",
     "async_score_trace",
     "configure",
     "find_bottlenecks",
     "get_config",
     "get_current_session",
+    "print_trace_summary",
+    "score_session",
     "score_trace",
     "step",
     "trace_session",

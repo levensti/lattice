@@ -9,7 +9,7 @@ from agent_trace import step, trace_session
 
 
 def test_sync_step_recorded():
-    @step(name="greeter", criteria="Must greet by name")
+    @step(name="greeter", goal="Must greet by name")
     def greet(name: str) -> str:
         return f"Hello, {name}!"
 
@@ -27,7 +27,7 @@ def test_sync_step_recorded():
 
 
 def test_async_step_recorded():
-    @step(name="async_greeter", criteria="Must greet")
+    @step(name="async_greeter", goal="Must greet")
     async def greet(name: str) -> str:
         return f"Hi, {name}!"
 
@@ -43,7 +43,7 @@ def test_async_step_recorded():
 
 
 def test_step_with_tags():
-    @step(name="search", criteria="Return results", tags=["io", "external"])
+    @step(name="search", goal="Return results", tags=["io", "external"])
     def search(query: str) -> list:
         return [{"title": "result"}]
 
@@ -54,11 +54,11 @@ def test_step_with_tags():
 
 
 def test_step_nested_spans():
-    @step(name="inner", criteria="inner criteria")
+    @step(name="inner", goal="inner criteria")
     def inner_fn(x: int) -> int:
         return x * 2
 
-    @step(name="outer", criteria="outer criteria")
+    @step(name="outer", goal="outer criteria")
     def outer_fn(x: int) -> int:
         return inner_fn(x) + 1
 
@@ -73,7 +73,7 @@ def test_step_nested_spans():
 
 
 def test_step_error_captured():
-    @step(name="failer", criteria="Should not fail")
+    @step(name="failer", goal="Should not fail")
     def failing() -> str:
         raise ValueError("something went wrong")
 
@@ -86,7 +86,7 @@ def test_step_error_captured():
 
 
 def test_step_no_session_passthrough():
-    @step(name="standalone", criteria="criteria")
+    @step(name="standalone", goal="criteria")
     def standalone(x: int) -> int:
         return x + 1
 
@@ -94,15 +94,15 @@ def test_step_no_session_passthrough():
 
 
 def test_step_ordering():
-    @step(name="step_a", criteria="a")
+    @step(name="step_a", goal="a")
     def step_a() -> str:
         return "a"
 
-    @step(name="step_b", criteria="b")
+    @step(name="step_b", goal="b")
     def step_b() -> str:
         return "b"
 
-    @step(name="step_c", criteria="c")
+    @step(name="step_c", goal="c")
     def step_c() -> str:
         return "c"
 

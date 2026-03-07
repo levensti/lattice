@@ -7,7 +7,7 @@ def _step(name, index, score=None, error=None, latency_ms=100.0):
         span_id=f"span-{index}",
         name=name,
         description="",
-        criteria="",
+        goal="",
         input_data="",
         output_data="",
         step_index=index,

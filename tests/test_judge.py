@@ -6,7 +6,7 @@ def test_build_judge_prompt_contains_fields():
     prompt = build_judge_prompt(
         name="researcher",
         description="Searches for information",
-        criteria="Must cite sources",
+        goal="Must cite sources",
         input_data="What is Python?",
         output_data="Python is a programming language.",
     )
@@ -19,7 +19,7 @@ def test_build_judge_prompt_contains_fields():
 
 def test_build_judge_prompt_default_criteria():
     prompt = build_judge_prompt(
-        name="x", description="", criteria="", input_data="in", output_data="out",
+        name="x", description="", goal="", input_data="in", output_data="out",
     )
     assert "quality" in prompt.lower()
 
