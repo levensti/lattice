@@ -305,6 +305,7 @@ def trace_session(
     *,
     workflow_name: str = "",
     goal: str,
+    persist: bool = True,
 ):
     """Context manager that groups decorated calls into a single trace.
 
@@ -313,6 +314,8 @@ def trace_session(
         workflow_name: Human-readable name for this workflow.
         goal: **Required.** The desired outcome of the workflow — used
             for session-level scoring via :func:`score_session`.
+        persist: If ``True`` (default), automatically save the completed
+            session to the local SQLite store when the context exits.
     """
     session = TraceSession(
         trace_id=trace_id or uuid.uuid4().hex,
@@ -327,6 +330,16 @@ def trace_session(
     finally:
         _current_session.reset(session_token)
         _current_span_id.reset(span_token)
+        if persist:
+            try:
+                from .store import save_session
+                save_session(session)
+            except Exception:
+                logger.warning(
+                    "Failed to persist trace %s to local store",
+                    session.trace_id,
+                    exc_info=True,
+                )
         logger.info(
             "Trace session ended (trace_id=%s, steps=%d)",
             session.trace_id,
