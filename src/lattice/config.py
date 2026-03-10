@@ -5,8 +5,8 @@ import os
 from pydantic import BaseModel
 
 
-class AgentTraceConfig(BaseModel):
-    service_name: str = "agent-trace"
+class LatticeConfig(BaseModel):
+    service_name: str = "lattice"
     otel_endpoint: str | None = None
     otel_enabled: bool = True
     judge_provider: str = "openai"
@@ -16,11 +16,11 @@ class AgentTraceConfig(BaseModel):
     judge_max_concurrency: int = 5
 
 
-_config: AgentTraceConfig | None = None
+_config: LatticeConfig | None = None
 
 
-def configure(**kwargs) -> AgentTraceConfig:
-    """Initialize agent-trace with the given settings.
+def configure(**kwargs) -> LatticeConfig:
+    """Initialize lattice with the given settings.
 
     When *judge_model* is provided without an explicit *judge_provider*,
     the provider, API base URL, and API key environment variable are
@@ -44,7 +44,7 @@ def configure(**kwargs) -> AgentTraceConfig:
     else:
         kwargs.setdefault("judge_api_key", os.environ.get("OPENAI_API_KEY"))
 
-    _config = AgentTraceConfig(**kwargs)
+    _config = LatticeConfig(**kwargs)
     if _config.otel_enabled and _config.otel_endpoint:
         from .otel import setup_tracer
 
@@ -52,11 +52,11 @@ def configure(**kwargs) -> AgentTraceConfig:
     return _config
 
 
-def get_config() -> AgentTraceConfig:
+def get_config() -> LatticeConfig:
     """Return the current config, creating a default one if needed."""
     global _config
     if _config is None:
-        _config = AgentTraceConfig(
+        _config = LatticeConfig(
             judge_api_key=os.environ.get("OPENAI_API_KEY"),
         )
     return _config

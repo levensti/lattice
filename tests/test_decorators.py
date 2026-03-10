@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from agent_trace import step, trace_session
-from agent_trace.decorators import instrument, trace_step
+from lattice import step, trace_session
+from lattice.decorators import instrument, trace_step
 
 
 # ── @step decorator tests ──────────────────────────────────────────────
@@ -347,7 +347,7 @@ def test_auto_transitions_from_call_graph():
 
 
 def test_manual_transition_preferred_over_auto():
-    from agent_trace import trace_transition
+    from lattice import trace_transition
 
     @step(goal="")
     def router() -> str:

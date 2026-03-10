@@ -1,4 +1,4 @@
-"""Example: State-machine / graph architecture with agent-trace.
+"""Example: State-machine / graph architecture with Lattice.
 
 A router dispatches to different agents based on the current state.
 Transitions are auto-recorded from the call graph — use trace_transition
@@ -8,7 +8,7 @@ Usage:
     python examples/state_machine_example.py
 """
 
-from agent_trace import (
+from lattice import (
     print_trace_summary,
     step,
     trace_session,

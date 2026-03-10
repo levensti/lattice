@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("agent_trace")
+logger = logging.getLogger("lattice")
 
 
 @dataclass
@@ -83,19 +83,19 @@ class TraceSession:
 
 
 _current_session: ContextVar[TraceSession | None] = ContextVar(
-    "agent_trace_session", default=None
+    "lattice_session", default=None
 )
 _current_span_id: ContextVar[str | None] = ContextVar(
-    "agent_trace_span_id", default=None
+    "lattice_span_id", default=None
 )
 _current_group_id: ContextVar[str | None] = ContextVar(
-    "agent_trace_group_id", default=None
+    "lattice_group_id", default=None
 )
 _current_iteration: ContextVar[int | None] = ContextVar(
-    "agent_trace_iteration", default=None
+    "lattice_iteration", default=None
 )
 _current_activation_reason: ContextVar[str | None] = ContextVar(
-    "agent_trace_activation_reason", default=None
+    "lattice_activation_reason", default=None
 )
 
 

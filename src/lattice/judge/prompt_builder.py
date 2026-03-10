@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 JUDGE_SYSTEM_PROMPT = (
-    "You are a quality judge for a step in a multi-agent AI system. "
+    "You are a quality judge for a step in a multi-agent system. "
     "Your job is to assess whether the output of this step meets its goal. "
     "Be objective, concise, and fair."
 )

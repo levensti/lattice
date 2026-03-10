@@ -1,4 +1,4 @@
-"""Example: Retrofitting agent-trace onto existing code.
+"""Example: Retrofitting Lattice onto existing code.
 
 Shows three ways to add tracing without modifying original source:
   1. instrument() — wrap an existing function
@@ -9,7 +9,7 @@ Usage:
     python examples/retrofit_example.py
 """
 
-from agent_trace import instrument, print_trace_summary, step, trace_session, trace_step
+from lattice import instrument, print_trace_summary, step, trace_session, trace_step
 
 
 # === Existing code (imagine this lives in another module) ================

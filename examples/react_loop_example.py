@@ -1,4 +1,4 @@
-"""Example: ReAct loop architecture with agent-trace.
+"""Example: ReAct loop architecture with Lattice.
 
 Simulates a single agent in a think -> act -> observe cycle, calling
 tools iteratively until it reaches an answer.
@@ -7,7 +7,7 @@ Usage:
     python examples/react_loop_example.py
 """
 
-from agent_trace import (
+from lattice import (
     print_trace_summary,
     step,
     trace_iterations,

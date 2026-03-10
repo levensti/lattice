@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from agent_trace import step, trace_session
-from agent_trace.context import (
+from lattice import step, trace_session
+from lattice.context import (
     trace_activation,
     trace_iterations,
     trace_loop,

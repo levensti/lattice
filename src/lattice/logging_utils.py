@@ -1,4 +1,4 @@
-"""Console logging helpers for agent-trace."""
+"""Console logging helpers for Lattice."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 
 from .context import TraceSession
 
-logger = logging.getLogger("agent_trace")
+logger = logging.getLogger("lattice")
 
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stderr)

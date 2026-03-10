@@ -1,7 +1,7 @@
-"""agent-trace: Quality debugging framework for multi-agent systems."""
+"""lattice: Quality debugging framework for multi-agent systems."""
 
 from .bottleneck import BottleneckResult, find_bottlenecks
-from .config import AgentTraceConfig, configure, get_config
+from .config import LatticeConfig, configure, get_config
 from .context import (
     GroupRecord,
     LoopContext,
@@ -22,7 +22,7 @@ from .judge.scorer import async_score_session, async_score_trace, score_session,
 from .logging_utils import print_trace_summary
 
 __all__ = [
-    "AgentTraceConfig",
+    "LatticeConfig",
     "BottleneckResult",
     "GroupRecord",
     "LoopContext",

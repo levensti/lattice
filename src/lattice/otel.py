@@ -40,7 +40,7 @@ def setup_tracer(service_name: str, endpoint: str | None = None) -> None:
 
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-    _tracer = trace.get_tracer("agent-trace")
+    _tracer = trace.get_tracer("lattice")
 
 
 def get_tracer():
@@ -48,7 +48,7 @@ def get_tracer():
     if not HAS_OTEL:
         return None
     if _tracer is None:
-        _tracer = trace.get_tracer("agent-trace")
+        _tracer = trace.get_tracer("lattice")
     return _tracer
 
 

@@ -11,7 +11,7 @@ from ..context import StepRecord, TraceSession
 from .prompt_builder import JUDGE_SYSTEM_PROMPT, build_judge_prompt, build_session_judge_prompt
 from .providers import create_provider, resolve_provider
 
-logger = logging.getLogger("agent_trace")
+logger = logging.getLogger("lattice")
 
 
 def _parse_judge_response(text: str) -> tuple[float, str]:

@@ -20,7 +20,7 @@ from .context import (
 )
 from .otel import traced_span
 
-logger = logging.getLogger("agent_trace")
+logger = logging.getLogger("lattice")
 
 _SELF_CLS = frozenset(("self", "cls"))
 
@@ -117,17 +117,17 @@ def _trace_decorator(
             start = time.perf_counter()
 
             otel_attrs = {
-                "agent_trace.name": name,
-                "agent_trace.input": input_str,
+                "lattice.name": name,
+                "lattice.input": input_str,
             }
             if tags:
-                otel_attrs["agent_trace.tags"] = ",".join(tags)
+                otel_attrs["lattice.tags"] = ",".join(tags)
             if role:
-                otel_attrs["agent_trace.role"] = role
+                otel_attrs["lattice.role"] = role
             if topo["group_id"]:
-                otel_attrs["agent_trace.group_id"] = topo["group_id"]
+                otel_attrs["lattice.group_id"] = topo["group_id"]
             if topo["iteration"] is not None:
-                otel_attrs["agent_trace.iteration"] = str(topo["iteration"])
+                otel_attrs["lattice.iteration"] = str(topo["iteration"])
             logger.info("Step started: %s", name)
             logger.debug("Step %s input: %s", name, input_str[:500])
             try:
@@ -136,8 +136,8 @@ def _trace_decorator(
                     output_str = _safe_serialize(result)
                     latency = (time.perf_counter() - start) * 1000
                     if span is not None:
-                        span.set_attribute("agent_trace.output", output_str[:4096])
-                        span.set_attribute("agent_trace.latency_ms", latency)
+                        span.set_attribute("lattice.output", output_str[:4096])
+                        span.set_attribute("lattice.latency_ms", latency)
                     if session:
                         _record_step(
                             session,
@@ -180,17 +180,17 @@ def _trace_decorator(
             start = time.perf_counter()
 
             otel_attrs = {
-                "agent_trace.name": name,
-                "agent_trace.input": input_str,
+                "lattice.name": name,
+                "lattice.input": input_str,
             }
             if tags:
-                otel_attrs["agent_trace.tags"] = ",".join(tags)
+                otel_attrs["lattice.tags"] = ",".join(tags)
             if role:
-                otel_attrs["agent_trace.role"] = role
+                otel_attrs["lattice.role"] = role
             if topo["group_id"]:
-                otel_attrs["agent_trace.group_id"] = topo["group_id"]
+                otel_attrs["lattice.group_id"] = topo["group_id"]
             if topo["iteration"] is not None:
-                otel_attrs["agent_trace.iteration"] = str(topo["iteration"])
+                otel_attrs["lattice.iteration"] = str(topo["iteration"])
             logger.info("Step started: %s", name)
             logger.debug("Step %s input: %s", name, input_str[:500])
             try:
@@ -199,8 +199,8 @@ def _trace_decorator(
                     output_str = _safe_serialize(result)
                     latency = (time.perf_counter() - start) * 1000
                     if span is not None:
-                        span.set_attribute("agent_trace.output", output_str[:4096])
-                        span.set_attribute("agent_trace.latency_ms", latency)
+                        span.set_attribute("lattice.output", output_str[:4096])
+                        span.set_attribute("lattice.latency_ms", latency)
                     if session:
                         _record_step(
                             session,
@@ -348,13 +348,13 @@ def trace_step(
     input_str = _safe_serialize(input_data) if input_data is not None else ""
     handle = _TraceStepHandle()
 
-    otel_attrs: dict[str, str] = {"agent_trace.name": name}
+    otel_attrs: dict[str, str] = {"lattice.name": name}
     if input_str:
-        otel_attrs["agent_trace.input"] = input_str
+        otel_attrs["lattice.input"] = input_str
     if tags:
-        otel_attrs["agent_trace.tags"] = ",".join(tags)
+        otel_attrs["lattice.tags"] = ",".join(tags)
     if role:
-        otel_attrs["agent_trace.role"] = role
+        otel_attrs["lattice.role"] = role
 
     logger.info("Step started: %s", name)
     try:
@@ -364,8 +364,8 @@ def trace_step(
             latency = (time.perf_counter() - start) * 1000
             if span is not None:
                 if output_str:
-                    span.set_attribute("agent_trace.output", output_str[:4096])
-                span.set_attribute("agent_trace.latency_ms", latency)
+                    span.set_attribute("lattice.output", output_str[:4096])
+                span.set_attribute("lattice.latency_ms", latency)
             if session:
                 _record_step(
                     session,
@@ -409,7 +409,7 @@ def instrument(
     Returns a new callable that traces calls to *func*.
     The original function is not modified::
 
-        from agent_trace import instrument
+        from lattice import instrument
 
         # Instrument a third-party function
         traced_search = instrument(search_api, goal="Return results")

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .context import TraceSession
 
-logger = logging.getLogger("agent_trace")
+logger = logging.getLogger("lattice")
 
 
 @dataclass

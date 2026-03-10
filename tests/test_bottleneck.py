@@ -1,5 +1,5 @@
-from agent_trace.context import GroupRecord, StepRecord, TraceSession
-from agent_trace.bottleneck import find_bottlenecks
+from lattice.context import GroupRecord, StepRecord, TraceSession
+from lattice.bottleneck import find_bottlenecks
 
 
 def _step(name, index, score=None, error=None, latency_ms=100.0,

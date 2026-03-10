@@ -1,4 +1,4 @@
-"""Example: Pipeline architecture with agent-trace quality debugging.
+"""Example: Pipeline architecture with Lattice quality debugging.
 
 Simulates a research -> write -> edit pipeline and shows how to trace,
 score, and find bottlenecks using the unified ``@step`` decorator.
@@ -8,7 +8,7 @@ Usage:
     python examples/multi_agent_example.py
 """
 
-from agent_trace import (
+from lattice import (
     find_bottlenecks,
     score_trace,
     step,

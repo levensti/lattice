@@ -1,5 +1,5 @@
-from agent_trace.judge.prompt_builder import build_judge_prompt
-from agent_trace.judge.scorer import _parse_judge_response
+from lattice.judge.prompt_builder import build_judge_prompt
+from lattice.judge.scorer import _parse_judge_response
 
 
 def test_build_judge_prompt_contains_fields():

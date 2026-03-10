@@ -1,8 +1,8 @@
-# agent-trace
+# Lattice
 
 You built a multi-agent system. It works... sometimes. **Which step is the bottleneck?**
 
-agent-trace adds a decorator to your existing code, scores each step against its goal with an LLM judge, and tells you exactly where quality breaks down — across pipelines, loops, parallel fan-outs, and state machines.
+Lattice adds a decorator to your existing code, scores each step against its goal with an LLM judge, and tells you exactly where quality breaks down — across pipelines, loops, parallel fan-outs, and state machines.
 
 ## Install
 
@@ -13,7 +13,7 @@ pip install -e .
 ## Quick Start
 
 ```python
-from agent_trace import step, trace_session, score_trace, find_bottlenecks
+from lattice import step, trace_session, score_trace, find_bottlenecks
 
 @step(goal="Must return at least 3 factual claims with sources")
 def researcher(topic: str) -> str:
@@ -32,7 +32,7 @@ for b in find_bottlenecks(session):
     print(f"{b.step_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
 
-Every `@step` and `trace_session` requires a `goal` — this is what the judge evaluates against.
+No `configure()` call needed. Every `@step` and `trace_session` requires a `goal` — this is what the judge evaluates against.
 
 ## Tracing
 
@@ -144,7 +144,7 @@ configure(
 )
 ```
 
-OTel spans include `agent_trace.name`, `agent_trace.input`, `agent_trace.output`, `agent_trace.latency_ms`, and topology metadata. Spans nest automatically. If `opentelemetry-sdk` is not installed, tracing still works — you just won't get OTel spans.
+OTel spans include `lattice.name`, `lattice.input`, `lattice.output`, `lattice.latency_ms`, and topology metadata. Spans nest automatically. If `opentelemetry-sdk` is not installed, tracing still works — you just won't get OTel spans.
 
 ## Examples
 

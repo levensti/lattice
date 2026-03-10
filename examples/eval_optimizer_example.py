@@ -1,4 +1,4 @@
-"""Example: Evaluator-optimizer loop with agent-trace.
+"""Example: Evaluator-optimizer loop with Lattice.
 
 A generator produces output, an evaluator scores it, and the generator
 retries with feedback until quality is sufficient.
@@ -7,7 +7,7 @@ Usage:
     python examples/eval_optimizer_example.py
 """
 
-from agent_trace import (
+from lattice import (
     print_trace_summary,
     step,
     trace_iterations,

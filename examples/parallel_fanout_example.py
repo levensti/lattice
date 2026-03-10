@@ -1,4 +1,4 @@
-"""Example: Parallel fan-out / fan-in architecture with agent-trace.
+"""Example: Parallel fan-out / fan-in architecture with Lattice.
 
 Multiple search agents run concurrently, and an aggregator synthesizes
 the results.
@@ -9,7 +9,7 @@ Usage:
 
 import asyncio
 
-from agent_trace import (
+from lattice import (
     print_trace_summary,
     step,
     trace_parallel,
