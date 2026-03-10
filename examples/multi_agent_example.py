@@ -9,14 +9,11 @@ Usage:
 """
 
 from agent_trace import (
-    configure,
     find_bottlenecks,
     score_trace,
     step,
     trace_session,
 )
-
-configure(judge_model="gpt-4o")
 
 
 @step(goal="Must return results relevant to the query with at least 2 distinct sources", tags=["io", "external"])
@@ -57,7 +54,7 @@ def main():
     print(f"Traced {len(session.steps)} steps\n")
 
     try:
-        score_trace(session)
+        score_trace(session, model="gpt-4o")
 
         print("=== Step Scores ===")
         for s in session.steps:
@@ -68,7 +65,6 @@ def main():
             print(f"  {b.step_name} (score={b.score}, impact={b.impact}): {b.explanation}")
     except ValueError as e:
         print(f"Skipping scoring (no API key): {e}")
-        print("Set OPENAI_API_KEY to enable LLM-based scoring.")
 
 
 if __name__ == "__main__":
