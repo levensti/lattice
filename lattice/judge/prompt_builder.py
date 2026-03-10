@@ -8,6 +8,19 @@ JUDGE_SYSTEM_PROMPT = (
 
 MAX_FIELD_CHARS = 4000
 
+_RATING_SCALE = (
+    "  1 = Completely fails the goal\n"
+    "  2 = Major issues, mostly unusable\n"
+    "  3 = Acceptable but with notable gaps\n"
+    "  4 = Good with only minor issues\n"
+    "  5 = Excellent, fully meets the goal\n"
+)
+
+_RESPONSE_FORMAT = (
+    'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
+    '{"score": <number 1-5>, "explanation": "<one or two sentences>"}'
+)
+
 
 def build_judge_prompt(
     *,
@@ -28,13 +41,8 @@ def build_judge_prompt(
         f"**Input to the step:**\n{input_data[:MAX_FIELD_CHARS]}\n\n"
         f"**Output from the step:**\n{output_data[:MAX_FIELD_CHARS]}\n\n"
         f"Rate the quality of this output on a scale of 1 to 5:\n"
-        f"  1 = Completely fails the goal\n"
-        f"  2 = Major issues, mostly unusable\n"
-        f"  3 = Acceptable but with notable gaps\n"
-        f"  4 = Good with only minor issues\n"
-        f"  5 = Excellent, fully meets the goal\n\n"
-        f'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
-        f'{{"score": <number 1-5>, "explanation": "<one or two sentences>"}}'
+        f"{_RATING_SCALE}\n"
+        f"{_RESPONSE_FORMAT}"
     )
 
 
@@ -53,11 +61,6 @@ def build_session_judge_prompt(
         f"**Goal:** {goal}\n\n"
         f"**Final output:**\n{final_output[:MAX_FIELD_CHARS]}\n\n"
         f"Rate how well the final output achieves the goal on a scale of 1 to 5:\n"
-        f"  1 = Completely fails the goal\n"
-        f"  2 = Major issues, mostly unusable\n"
-        f"  3 = Acceptable but with notable gaps\n"
-        f"  4 = Good with only minor issues\n"
-        f"  5 = Excellent, fully achieves the goal\n\n"
-        f'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
-        f'{{"score": <number 1-5>, "explanation": "<one or two sentences>"}}'
+        f"{_RATING_SCALE}\n"
+        f"{_RESPONSE_FORMAT}"
     )

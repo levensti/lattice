@@ -4,12 +4,10 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
-
 from ..config import get_config
 from ..context import StepRecord, TraceSession
 from .prompt_builder import JUDGE_SYSTEM_PROMPT, build_judge_prompt, build_session_judge_prompt
-from .providers import create_provider, resolve_provider
+from .providers import JudgeProvider, create_provider, resolve_provider
 
 logger = logging.getLogger("lattice")
 
@@ -55,14 +53,14 @@ def _build_prompt_for_step(step: StepRecord) -> str:
     )
 
 
-def _score_single_step(step: StepRecord, provider: Any) -> None:
+def _score_single_step(step: StepRecord, provider: JudgeProvider) -> None:
     logger.info("Scoring step: %s", step.name)
     raw = provider.judge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
     step.score, step.score_explanation = _parse_judge_response(raw)
     logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
 
-async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
+async def _async_score_single_step(step: StepRecord, provider: JudgeProvider) -> None:
     logger.info("Scoring step: %s", step.name)
     raw = await provider.ajudge(JUDGE_SYSTEM_PROMPT, _build_prompt_for_step(step))
     step.score, step.score_explanation = _parse_judge_response(raw)
@@ -70,10 +68,10 @@ async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
 
 
 def _get_provider(
-    provider: Any | None = None,
+    provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
-):
+) -> JudgeProvider:
     if provider is not None:
         return provider
     if model is not None:
@@ -86,13 +84,14 @@ def _get_provider(
         )
     return create_provider(
         cfg.judge_provider, cfg.judge_api_key, cfg.judge_model, cfg.judge_api_base,
+        timeout=cfg.judge_timeout,
     )
 
 
 def score_trace(
     session: TraceSession,
     *,
-    provider: Any | None = None,
+    provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
 ) -> list[StepRecord]:
@@ -115,7 +114,7 @@ def score_trace(
 async def async_score_trace(
     session: TraceSession,
     *,
-    provider: Any | None = None,
+    provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
     max_concurrency: int = 5,
@@ -139,7 +138,7 @@ async def async_score_trace(
 def score_session(
     session: TraceSession,
     *,
-    provider: Any | None = None,
+    provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
 ) -> tuple[float, str]:
@@ -177,7 +176,7 @@ def score_session(
 async def async_score_session(
     session: TraceSession,
     *,
-    provider: Any | None = None,
+    provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
 ) -> tuple[float, str]:

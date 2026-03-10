@@ -14,6 +14,7 @@ class LatticeConfig(BaseModel):
     judge_api_key: str | None = None
     judge_api_base: str = "https://api.openai.com/v1"
     judge_max_concurrency: int = 5
+    judge_timeout: float = 60.0
 
 
 _config: LatticeConfig | None = None
