@@ -9,7 +9,7 @@ from typing import Any
 from ..config import get_config
 from ..context import StepRecord, TraceSession
 from .prompt_builder import JUDGE_SYSTEM_PROMPT, build_judge_prompt, build_session_judge_prompt
-from .providers import create_provider
+from .providers import create_provider, resolve_provider
 
 logger = logging.getLogger("agent_trace")
 
@@ -69,14 +69,20 @@ async def _async_score_single_step(step: StepRecord, provider: Any) -> None:
     logger.info("Scored step: %s → %.1f/5", step.name, step.score)
 
 
-def _get_provider(provider: Any | None):
+def _get_provider(
+    provider: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+):
     if provider is not None:
         return provider
+    if model is not None:
+        return resolve_provider(model, api_key)
     cfg = get_config()
     if not cfg.judge_api_key:
         raise ValueError(
-            "No judge API key configured. "
-            "Call configure(judge_api_key=...) or set OPENAI_API_KEY."
+            "No judge API key configured. Pass model= to the scoring "
+            "function, call configure(), or set OPENAI_API_KEY."
         )
     return create_provider(
         cfg.judge_provider, cfg.judge_api_key, cfg.judge_model, cfg.judge_api_base,
@@ -87,9 +93,19 @@ def score_trace(
     session: TraceSession,
     *,
     provider: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> list[StepRecord]:
-    """Score every step in the session synchronously. Updates steps in place."""
-    prov = _get_provider(provider)
+    """Score every step in the session synchronously. Updates steps in place.
+
+    The judge LLM can be specified in three ways (highest priority first):
+
+    1. Pass an explicit *provider* instance.
+    2. Pass *model* (and optionally *api_key*) — the provider is resolved
+       automatically from the model name.
+    3. Fall back to the global config set via :func:`configure`.
+    """
+    prov = _get_provider(provider, model, api_key)
     for step in session.steps:
         if step.error is None:
             _score_single_step(step, prov)
@@ -100,10 +116,15 @@ async def async_score_trace(
     session: TraceSession,
     *,
     provider: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
     max_concurrency: int = 5,
 ) -> list[StepRecord]:
-    """Score every step concurrently. Updates steps in place."""
-    prov = _get_provider(provider)
+    """Score every step concurrently. Updates steps in place.
+
+    See :func:`score_trace` for how the judge LLM is resolved.
+    """
+    prov = _get_provider(provider, model, api_key)
     sem = asyncio.Semaphore(max_concurrency)
     scorable = [s for s in session.steps if s.error is None]
 
@@ -119,11 +140,15 @@ def score_session(
     session: TraceSession,
     *,
     provider: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[float, str]:
     """Judge the final output of the workflow against the session goal.
 
     Looks at the last step's output and evaluates it against ``session.goal``.
     Returns ``(score, explanation)`` and stores them on the session.
+
+    See :func:`score_trace` for how the judge LLM is resolved.
 
     Raises:
         ValueError: If the session has no goal or no steps.
@@ -133,7 +158,7 @@ def score_session(
     if not session.steps:
         raise ValueError("Session has no steps — nothing to judge.")
 
-    prov = _get_provider(provider)
+    prov = _get_provider(provider, model, api_key)
     last_step = session.steps[-1]
     prompt = build_session_judge_prompt(
         goal=session.goal,
@@ -153,14 +178,19 @@ async def async_score_session(
     session: TraceSession,
     *,
     provider: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[float, str]:
-    """Async version of :func:`score_session`."""
+    """Async version of :func:`score_session`.
+
+    See :func:`score_trace` for how the judge LLM is resolved.
+    """
     if not session.goal:
         raise ValueError("Session has no goal set — nothing to judge against.")
     if not session.steps:
         raise ValueError("Session has no steps — nothing to judge.")
 
-    prov = _get_provider(provider)
+    prov = _get_provider(provider, model, api_key)
     last_step = session.steps[-1]
     prompt = build_session_judge_prompt(
         goal=session.goal,

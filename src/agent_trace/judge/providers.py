@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Protocol, runtime_checkable
 
 import httpx
@@ -126,3 +127,57 @@ def create_provider(
     raise ValueError(
         f"Unknown judge provider '{provider_name}'. Use 'openai' or 'anthropic'."
     )
+
+
+_OPENAI_PREFIXES = ("gpt-", "o1-", "o3-", "o4-")
+_ANTHROPIC_PREFIXES = ("claude-",)
+_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+_OPENROUTER_ENV_VAR = "OPENROUTER_API_KEY"
+
+
+def _route_model(model: str) -> tuple[str, str, str]:
+    """Return (provider_type, api_base, env_var_name) for a model name.
+
+    Models containing ``/`` (e.g. ``openai/gpt-4o``, ``google/gemini-2.0-flash``)
+    are routed through OpenRouter. Bare model names are matched by prefix to
+    their native API.
+    """
+    if "/" in model:
+        return "openai", _OPENROUTER_BASE, _OPENROUTER_ENV_VAR
+
+    if any(model.startswith(p) for p in _OPENAI_PREFIXES):
+        return "openai", "https://api.openai.com/v1", "OPENAI_API_KEY"
+
+    if any(model.startswith(p) for p in _ANTHROPIC_PREFIXES):
+        return "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY"
+
+    return "openai", _OPENROUTER_BASE, _OPENROUTER_ENV_VAR
+
+
+def resolve_provider(
+    model: str,
+    api_key: str | None = None,
+) -> OpenAIJudgeProvider | AnthropicJudgeProvider:
+    """Create a provider by auto-detecting the backend from the model name.
+
+    Routing rules:
+        - ``gpt-*``, ``o1-*``, ``o3-*``, ``o4-*`` → OpenAI
+        - ``claude-*`` → Anthropic
+        - Names containing ``/`` → OpenRouter
+        - Anything else → OpenRouter
+
+    API keys are read from standard environment variables when *api_key*
+    is not provided (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, or
+    ``OPENROUTER_API_KEY``).
+    """
+    provider_name, api_base, env_var = _route_model(model)
+
+    if api_key is None:
+        api_key = os.environ.get(env_var)
+    if not api_key:
+        raise ValueError(
+            f"No API key for model '{model}'. "
+            f"Set the {env_var} environment variable or pass api_key=."
+        )
+
+    return create_provider(provider_name, api_key, model, api_base)
