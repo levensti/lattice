@@ -1,8 +1,8 @@
 # Lattice
 
-Find the bottleneck in multi-agent system.
+Lattice is a lightweight quality debugging framework for multi-agent systems. Trace each step in your workflow, score it against a defined goal using an LLM judge, and find exactly where quality degrades.
 
-Lattice is a lightweight debugging framework for developers with existing agent pipelines. It traces each step, scores it against a defined goal using an LLM judge, and surfaces the steps where quality degrades.
+Designed to plug into existing codebases with minimal changes — add a few lines of code and get full visibility into your pipeline in minutes. Perfect for modern agent architectures, including sequential pipelines, ReAct loops, parallel fan-outs, evaluator-optimizer patterns, state machines, and orchestrator-subagent hierarchies.
 
 ## Install
 
