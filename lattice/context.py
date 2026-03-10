@@ -5,7 +5,10 @@ import logging
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+GroupType = Literal["loop", "parallel"]
 
 logger = logging.getLogger("lattice")
 
@@ -38,7 +41,7 @@ class GroupRecord:
     """Metadata about a structural group of steps (loop or parallel)."""
 
     group_id: str
-    group_type: str  # "loop" or "parallel"
+    group_type: GroupType
     name: str
     parent_span_id: str | None = None
 
@@ -80,6 +83,12 @@ class TraceSession:
 
     def add_transition(self, transition: TransitionRecord) -> None:
         self.transitions.append(transition)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the session to a plain dict (suitable for JSON)."""
+        d = asdict(self)
+        d.pop("_step_counter", None)
+        return d
 
 
 _current_session: ContextVar[TraceSession | None] = ContextVar(

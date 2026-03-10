@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from .context import TraceSession
+
+ImpactType = Literal[
+    "error",
+    "lowest_score",
+    "largest_drop",
+    "below_average",
+    "loop_no_convergence",
+    "weakest_branch",
+]
 
 logger = logging.getLogger("lattice")
 
@@ -16,7 +26,7 @@ class BottleneckResult:
     step_index: int
     score: float
     explanation: str
-    impact: str
+    impact: ImpactType
     latency_ms: float
 
 
@@ -74,7 +84,7 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
 
 def _classify_impact(
     score: float, step_index: int, session: TraceSession
-) -> str:
+) -> ImpactType:
     scored = sorted(
         [s for s in session.steps if s.score is not None],
         key=lambda s: s.step_index,

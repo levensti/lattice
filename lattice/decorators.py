@@ -96,6 +96,81 @@ def _read_topology_context() -> dict:
     }
 
 
+def _begin_step(func, args, kwargs, *, step_id, name, tags, role):
+    """Common setup for both sync and async step wrappers.
+
+    Returns a dict of context needed by ``_complete_step`` / ``_fail_step``.
+    """
+    session = _current_session.get()
+    input_str = _capture_inputs(func, args, kwargs)
+    span_id = step_id or uuid.uuid4().hex
+    parent_id = _current_span_id.get()
+    step_index = session.next_index() if session else 0
+    topo = _read_topology_context()
+    parent_token = _current_span_id.set(span_id)
+
+    otel_attrs: dict[str, str] = {
+        "lattice.name": name,
+        "lattice.input": input_str,
+    }
+    if tags:
+        otel_attrs["lattice.tags"] = ",".join(tags)
+    if role:
+        otel_attrs["lattice.role"] = role
+    if topo["group_id"]:
+        otel_attrs["lattice.group_id"] = topo["group_id"]
+    if topo["iteration"] is not None:
+        otel_attrs["lattice.iteration"] = str(topo["iteration"])
+
+    logger.info("Step started: %s", name)
+    logger.debug("Step %s input: %s", name, input_str[:500])
+
+    return {
+        "session": session, "input_str": input_str,
+        "span_id": span_id, "parent_id": parent_id,
+        "step_index": step_index, "topo": topo,
+        "parent_token": parent_token, "otel_attrs": otel_attrs,
+        "start": time.perf_counter(),
+    }
+
+
+def _complete_step(ctx, *, name, description, goal, tags, role, result, span):
+    """Record a successful step and return the serialized output."""
+    output_str = _safe_serialize(result)
+    latency = (time.perf_counter() - ctx["start"]) * 1000
+    if span is not None:
+        span.set_attribute("lattice.output", output_str[:4096])
+        span.set_attribute("lattice.latency_ms", latency)
+    if ctx["session"]:
+        _record_step(
+            ctx["session"],
+            span_id=ctx["span_id"], name=name,
+            description=description, goal=goal,
+            input_data=ctx["input_str"], output_data=output_str,
+            step_index=ctx["step_index"], latency_ms=latency,
+            parent_span_id=ctx["parent_id"], tags=tags, role=role,
+            **ctx["topo"],
+        )
+    logger.info("Step completed: %s (%.1fms)", name, latency)
+    logger.debug("Step %s output: %s", name, output_str[:500])
+
+
+def _fail_step(ctx, *, name, description, goal, tags, role, exc):
+    """Record a failed step."""
+    latency = (time.perf_counter() - ctx["start"]) * 1000
+    logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
+    if ctx["session"]:
+        _record_step(
+            ctx["session"],
+            span_id=ctx["span_id"], name=name,
+            description=description, goal=goal,
+            input_data=ctx["input_str"], output_data="",
+            step_index=ctx["step_index"], latency_ms=latency,
+            parent_span_id=ctx["parent_id"], tags=tags, role=role,
+            error=str(exc), **ctx["topo"],
+        )
+
+
 def _trace_decorator(
     name: str,
     description: str,
@@ -107,129 +182,31 @@ def _trace_decorator(
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            session = _current_session.get()
-            input_str = _capture_inputs(func, args, kwargs)
-            span_id = step_id or uuid.uuid4().hex
-            parent_id = _current_span_id.get()
-            step_index = session.next_index() if session else 0
-            topo = _read_topology_context()
-            parent_token = _current_span_id.set(span_id)
-            start = time.perf_counter()
-
-            otel_attrs = {
-                "lattice.name": name,
-                "lattice.input": input_str,
-            }
-            if tags:
-                otel_attrs["lattice.tags"] = ",".join(tags)
-            if role:
-                otel_attrs["lattice.role"] = role
-            if topo["group_id"]:
-                otel_attrs["lattice.group_id"] = topo["group_id"]
-            if topo["iteration"] is not None:
-                otel_attrs["lattice.iteration"] = str(topo["iteration"])
-            logger.info("Step started: %s", name)
-            logger.debug("Step %s input: %s", name, input_str[:500])
+            ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
             try:
-                with traced_span(f"step:{name}", otel_attrs) as span:
+                with traced_span(f"step:{name}", ctx["otel_attrs"]) as span:
                     result = func(*args, **kwargs)
-                    output_str = _safe_serialize(result)
-                    latency = (time.perf_counter() - start) * 1000
-                    if span is not None:
-                        span.set_attribute("lattice.output", output_str[:4096])
-                        span.set_attribute("lattice.latency_ms", latency)
-                    if session:
-                        _record_step(
-                            session,
-                            span_id=span_id, name=name,
-                            description=description, goal=goal,
-                            input_data=input_str, output_data=output_str,
-                            step_index=step_index, latency_ms=latency,
-                            parent_span_id=parent_id, tags=tags, role=role,
-                            **topo,
-                        )
-                    logger.info("Step completed: %s (%.1fms)", name, latency)
-                    logger.debug("Step %s output: %s", name, output_str[:500])
+                    _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, span=span)
                     return result
             except Exception as exc:
-                latency = (time.perf_counter() - start) * 1000
-                logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
-                if session:
-                    _record_step(
-                        session,
-                        span_id=span_id, name=name,
-                        description=description, goal=goal,
-                        input_data=input_str, output_data="",
-                        step_index=step_index, latency_ms=latency,
-                        parent_span_id=parent_id, tags=tags, role=role,
-                        error=str(exc), **topo,
-                    )
+                _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
             finally:
-                _current_span_id.reset(parent_token)
+                _current_span_id.reset(ctx["parent_token"])
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            session = _current_session.get()
-            input_str = _capture_inputs(func, args, kwargs)
-            span_id = step_id or uuid.uuid4().hex
-            parent_id = _current_span_id.get()
-            step_index = session.next_index() if session else 0
-            topo = _read_topology_context()
-            parent_token = _current_span_id.set(span_id)
-            start = time.perf_counter()
-
-            otel_attrs = {
-                "lattice.name": name,
-                "lattice.input": input_str,
-            }
-            if tags:
-                otel_attrs["lattice.tags"] = ",".join(tags)
-            if role:
-                otel_attrs["lattice.role"] = role
-            if topo["group_id"]:
-                otel_attrs["lattice.group_id"] = topo["group_id"]
-            if topo["iteration"] is not None:
-                otel_attrs["lattice.iteration"] = str(topo["iteration"])
-            logger.info("Step started: %s", name)
-            logger.debug("Step %s input: %s", name, input_str[:500])
+            ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
             try:
-                with traced_span(f"step:{name}", otel_attrs) as span:
+                with traced_span(f"step:{name}", ctx["otel_attrs"]) as span:
                     result = await func(*args, **kwargs)
-                    output_str = _safe_serialize(result)
-                    latency = (time.perf_counter() - start) * 1000
-                    if span is not None:
-                        span.set_attribute("lattice.output", output_str[:4096])
-                        span.set_attribute("lattice.latency_ms", latency)
-                    if session:
-                        _record_step(
-                            session,
-                            span_id=span_id, name=name,
-                            description=description, goal=goal,
-                            input_data=input_str, output_data=output_str,
-                            step_index=step_index, latency_ms=latency,
-                            parent_span_id=parent_id, tags=tags, role=role,
-                            **topo,
-                        )
-                    logger.info("Step completed: %s (%.1fms)", name, latency)
-                    logger.debug("Step %s output: %s", name, output_str[:500])
+                    _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, span=span)
                     return result
             except Exception as exc:
-                latency = (time.perf_counter() - start) * 1000
-                logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
-                if session:
-                    _record_step(
-                        session,
-                        span_id=span_id, name=name,
-                        description=description, goal=goal,
-                        input_data=input_str, output_data="",
-                        step_index=step_index, latency_ms=latency,
-                        parent_span_id=parent_id, tags=tags, role=role,
-                        error=str(exc), **topo,
-                    )
+                _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
             finally:
-                _current_span_id.reset(parent_token)
+                _current_span_id.reset(ctx["parent_token"])
 
         if inspect.iscoroutinefunction(func):
             return async_wrapper

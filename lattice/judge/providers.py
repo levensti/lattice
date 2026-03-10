@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Protocol, runtime_checkable
 
 import httpx
+
+logger = logging.getLogger("lattice")
+
+_DEFAULT_TIMEOUT = 60.0
 
 
 @runtime_checkable
@@ -14,6 +19,26 @@ class JudgeProvider(Protocol):
     async def ajudge(self, system_prompt: str, user_prompt: str) -> str: ...
 
 
+def _extract_openai_content(resp: httpx.Response) -> str:
+    """Extract the assistant message from an OpenAI-style response."""
+    try:
+        return resp.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError(
+            f"Unexpected response from {resp.url}: {resp.text[:500]}"
+        ) from exc
+
+
+def _extract_anthropic_content(resp: httpx.Response) -> str:
+    """Extract the text from an Anthropic Messages response."""
+    try:
+        return resp.json()["content"][0]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError(
+            f"Unexpected response from {resp.url}: {resp.text[:500]}"
+        ) from exc
+
+
 class OpenAIJudgeProvider:
     """Calls any OpenAI-compatible chat completions endpoint."""
 
@@ -22,10 +47,12 @@ class OpenAIJudgeProvider:
         api_key: str,
         model: str = "gpt-4o",
         api_base: str = "https://api.openai.com/v1",
+        timeout: float = _DEFAULT_TIMEOUT,
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
+        self.timeout = timeout
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -44,24 +71,24 @@ class OpenAIJudgeProvider:
         }
 
     def judge(self, system_prompt: str, user_prompt: str) -> str:
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(
                 f"{self.api_base}/chat/completions",
                 headers=self._headers(),
                 json=self._payload(system_prompt, user_prompt),
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+            return _extract_openai_content(resp)
 
     async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
                 f"{self.api_base}/chat/completions",
                 headers=self._headers(),
                 json=self._payload(system_prompt, user_prompt),
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+            return _extract_openai_content(resp)
 
 
 class AnthropicJudgeProvider:
@@ -71,10 +98,12 @@ class AnthropicJudgeProvider:
         self,
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
+        timeout: float = _DEFAULT_TIMEOUT,
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = "https://api.anthropic.com/v1"
+        self.timeout = timeout
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -93,24 +122,24 @@ class AnthropicJudgeProvider:
         }
 
     def judge(self, system_prompt: str, user_prompt: str) -> str:
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(
                 f"{self.api_base}/messages",
                 headers=self._headers(),
                 json=self._payload(system_prompt, user_prompt),
             )
             resp.raise_for_status()
-            return resp.json()["content"][0]["text"]
+            return _extract_anthropic_content(resp)
 
     async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
                 f"{self.api_base}/messages",
                 headers=self._headers(),
                 json=self._payload(system_prompt, user_prompt),
             )
             resp.raise_for_status()
-            return resp.json()["content"][0]["text"]
+            return _extract_anthropic_content(resp)
 
 
 def create_provider(
@@ -118,12 +147,13 @@ def create_provider(
     api_key: str,
     model: str,
     api_base: str = "https://api.openai.com/v1",
+    timeout: float = _DEFAULT_TIMEOUT,
 ) -> OpenAIJudgeProvider | AnthropicJudgeProvider:
     """Factory that returns the right provider instance."""
     if provider_name == "openai":
-        return OpenAIJudgeProvider(api_key, model, api_base)
+        return OpenAIJudgeProvider(api_key, model, api_base, timeout=timeout)
     if provider_name == "anthropic":
-        return AnthropicJudgeProvider(api_key, model)
+        return AnthropicJudgeProvider(api_key, model, timeout=timeout)
     raise ValueError(
         f"Unknown judge provider '{provider_name}'. Use 'openai' or 'anthropic'."
     )
