@@ -32,7 +32,7 @@ for b in find_bottlenecks(session):
     print(f"{b.step_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
 
-No `configure()` call needed. Every `@step` and `trace_session` requires a `goal` — this is what the judge evaluates against.
+Every `@step` and `trace_session` requires a `goal` — this is what the judge evaluates against. Traces are automatically saved to a local SQLite database so you can query and visualize them later.
 
 ## Tracing
 
@@ -133,18 +133,40 @@ for b in find_bottlenecks(session):
 | `"loop_no_convergence"` | Scores didn't improve across loop iterations             |
 | `"weakest_branch"`      | Worst parallel branch, significantly below group average |
 
-## Configuration
+## Trace Persistence & Dashboard
 
-`configure()` is optional — you only need it for OpenTelemetry export or to set global judge defaults.
+Traces are automatically saved to a local SQLite database (`~/.lattice/traces.db`) when a `trace_session` exits — no setup required.
+
+### Querying traces
 
 ```python
-configure(
-    otel_endpoint="localhost:4317",  # enables OTel span export
-    judge_model="gpt-4o",           # global default (provider auto-detected)
-)
+import lattice
+
+lattice.traces()                         # all traces, most recent first
+lattice.traces(last=5)                   # 5 most recent
+lattice.traces(workflow="summarize")     # filter by workflow name
+lattice.traces(trace_id="abc123")        # specific trace
 ```
 
-OTel spans include `lattice.name`, `lattice.input`, `lattice.output`, `lattice.latency_ms`, and topology metadata. Spans nest automatically. If `opentelemetry-sdk` is not installed, tracing still works — you just won't get OTel spans.
+### Dashboard
+
+Browse traces visually with the built-in local dashboard:
+
+```bash
+python -m lattice dashboard              # starts at http://127.0.0.1:8787
+python -m lattice dashboard --port 8080  # custom port
+```
+
+### Configuration
+
+```python
+# Change the database location
+lattice.configure(db_path="/custom/path/traces.db")
+
+# Disable auto-persist for a specific session
+with trace_session(goal="...", persist=False) as session:
+    ...
+```
 
 ## Examples
 
