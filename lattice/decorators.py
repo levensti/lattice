@@ -18,7 +18,6 @@ from .context import (
     _current_session,
     _current_span_id,
 )
-from .otel import traced_span
 
 logger = logging.getLogger("lattice")
 
@@ -109,19 +108,6 @@ def _begin_step(func, args, kwargs, *, step_id, name, tags, role):
     topo = _read_topology_context()
     parent_token = _current_span_id.set(span_id)
 
-    otel_attrs: dict[str, str] = {
-        "lattice.name": name,
-        "lattice.input": input_str,
-    }
-    if tags:
-        otel_attrs["lattice.tags"] = ",".join(tags)
-    if role:
-        otel_attrs["lattice.role"] = role
-    if topo["group_id"]:
-        otel_attrs["lattice.group_id"] = topo["group_id"]
-    if topo["iteration"] is not None:
-        otel_attrs["lattice.iteration"] = str(topo["iteration"])
-
     logger.info("Step started: %s", name)
     logger.debug("Step %s input: %s", name, input_str[:500])
 
@@ -129,18 +115,15 @@ def _begin_step(func, args, kwargs, *, step_id, name, tags, role):
         "session": session, "input_str": input_str,
         "span_id": span_id, "parent_id": parent_id,
         "step_index": step_index, "topo": topo,
-        "parent_token": parent_token, "otel_attrs": otel_attrs,
+        "parent_token": parent_token,
         "start": time.perf_counter(),
     }
 
 
-def _complete_step(ctx, *, name, description, goal, tags, role, result, span):
+def _complete_step(ctx, *, name, description, goal, tags, role, result):
     """Record a successful step and return the serialized output."""
     output_str = _safe_serialize(result)
     latency = (time.perf_counter() - ctx["start"]) * 1000
-    if span is not None:
-        span.set_attribute("lattice.output", output_str[:4096])
-        span.set_attribute("lattice.latency_ms", latency)
     if ctx["session"]:
         _record_step(
             ctx["session"],
@@ -184,10 +167,9 @@ def _trace_decorator(
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
             try:
-                with traced_span(f"step:{name}", ctx["otel_attrs"]) as span:
-                    result = func(*args, **kwargs)
-                    _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, span=span)
-                    return result
+                result = func(*args, **kwargs)
+                _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                return result
             except Exception as exc:
                 _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
@@ -198,10 +180,9 @@ def _trace_decorator(
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
             try:
-                with traced_span(f"step:{name}", ctx["otel_attrs"]) as span:
-                    result = await func(*args, **kwargs)
-                    _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, span=span)
-                    return result
+                result = await func(*args, **kwargs)
+                _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                return result
             except Exception as exc:
                 _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
@@ -325,35 +306,22 @@ def trace_step(
     input_str = _safe_serialize(input_data) if input_data is not None else ""
     handle = _TraceStepHandle()
 
-    otel_attrs: dict[str, str] = {"lattice.name": name}
-    if input_str:
-        otel_attrs["lattice.input"] = input_str
-    if tags:
-        otel_attrs["lattice.tags"] = ",".join(tags)
-    if role:
-        otel_attrs["lattice.role"] = role
-
     logger.info("Step started: %s", name)
     try:
-        with traced_span(f"step:{name}", otel_attrs) as span:
-            yield handle
-            output_str = _safe_serialize(handle._output) if handle._output is not None else ""
-            latency = (time.perf_counter() - start) * 1000
-            if span is not None:
-                if output_str:
-                    span.set_attribute("lattice.output", output_str[:4096])
-                span.set_attribute("lattice.latency_ms", latency)
-            if session:
-                _record_step(
-                    session,
-                    span_id=span_id, name=name,
-                    description=description, goal=goal,
-                    input_data=input_str, output_data=output_str,
-                    step_index=step_index, latency_ms=latency,
-                    parent_span_id=parent_id, tags=tags, role=role,
-                    **topo,
-                )
-            logger.info("Step completed: %s (%.1fms)", name, latency)
+        yield handle
+        output_str = _safe_serialize(handle._output) if handle._output is not None else ""
+        latency = (time.perf_counter() - start) * 1000
+        if session:
+            _record_step(
+                session,
+                span_id=span_id, name=name,
+                description=description, goal=goal,
+                input_data=input_str, output_data=output_str,
+                step_index=step_index, latency_ms=latency,
+                parent_span_id=parent_id, tags=tags, role=role,
+                **topo,
+            )
+        logger.info("Step completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
         logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
