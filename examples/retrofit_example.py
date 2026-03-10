@@ -46,7 +46,7 @@ def main():
     agent.search = instrument(agent.search, goal="Return relevant search results")
     agent.summarize = instrument(agent.summarize, goal="Produce a coherent summary")
 
-    with trace_session(workflow_name="Retrofit Demo") as session:
+    with trace_session(workflow_name="Retrofit Demo", goal="Complete a research pipeline and fetch supplementary data") as session:
         # 2. trace_step — context manager for code blocks
         with trace_step("agent_run", goal="Complete research pipeline", input_data="Python") as ts:
             result = agent.run("Python")
@@ -72,7 +72,7 @@ def main():
         def process(self, data: str) -> str:
             return f"Processed: {data}"
 
-    with trace_session(workflow_name="Class Method Demo") as session:
+    with trace_session(workflow_name="Class Method Demo", goal="Process input through a traced class method") as session:
         agent2 = TracedAgent()
         agent2.process("hello")
 

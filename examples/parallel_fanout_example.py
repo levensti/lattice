@@ -46,7 +46,7 @@ async def aggregate(results: list[list[str]]) -> str:
 async def main():
     query = "Python asyncio"
 
-    with trace_session(workflow_name="Parallel Search") as session:
+    with trace_session(workflow_name="Parallel Search", goal="Find and summarize relevant results from multiple sources") as session:
         with trace_parallel("search_fanout"):
             results = await asyncio.gather(
                 search_web(query),

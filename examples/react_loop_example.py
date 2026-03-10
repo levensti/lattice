@@ -47,7 +47,7 @@ def observe(state: dict, result: dict) -> dict:
 def main():
     state = {"question": "What is Python?"}
 
-    with trace_session(workflow_name="ReAct Agent") as session:
+    with trace_session(workflow_name="ReAct Agent", goal="Answer the user's question accurately using iterative tool calls") as session:
         iters = trace_iterations("react", range(5))
         for _ in iters:
             plan = think(state)

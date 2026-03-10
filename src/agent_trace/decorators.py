@@ -248,27 +248,28 @@ def step(
     tags: Sequence[str] = (),
     role: str | None = None,
 ) -> Callable:
-    """Decorator to trace any step in a workflow.
+    """Decorator to trace a step in a workflow.
 
-    Can be used in several ways::
+    A ``goal`` is required so the judge can evaluate step quality::
 
-        @step                              # name inferred from function
-        def think(state): ...
-
-        @step(goal="Must cite sources")    # name inferred, with goal
+        @step(goal="Must cite sources")
         def research(topic): ...
 
-        @step(name="custom_name")          # explicit name
-        def my_func(): ...
+        @step(goal="Decide which tool to call", role="think")
+        def think(state): ...
 
     Args:
         name: Step name (defaults to the function's ``__name__``).
         description: What this step does.
-        goal: What success looks like — the judge evaluates against this.
+        goal: **Required.** What success looks like — the judge evaluates
+            against this.
         step_id: Custom span ID (auto-generated if omitted).
         tags: Labels for grouping/filtering (e.g. ``["llm", "io"]``).
         role: Semantic role (e.g. ``"generator"``, ``"evaluator"``,
               ``"think"``). Used by topology-aware analysis.
+
+    Raises:
+        TypeError: If *goal* is not provided.
     """
     if _func is not None and not callable(_func):
         if name is not None:
@@ -278,6 +279,11 @@ def step(
 
     def decorator(func: Callable) -> Callable:
         actual_name = name if name is not None else func.__name__
+        if not goal:
+            raise TypeError(
+                f"@step requires a goal — use @step(goal=\"...\") "
+                f"instead of bare @step on '{actual_name}'."
+            )
         return _trace_decorator(actual_name, description, goal, step_id, tags, role)(func)
 
     if _func is not None:
@@ -320,12 +326,17 @@ def trace_step(
 
     Args:
         name: Step name.
-        goal: Quality goal for the judge.
+        goal: **Required.** Quality goal for the judge.
         description: What this block does.
         role: Semantic role in the architecture.
         tags: Labels for grouping/filtering.
         input_data: Optional input to record on the step.
     """
+    if not goal:
+        raise TypeError(
+            f"trace_step requires a goal — use "
+            f"trace_step(\"{name}\", goal=\"...\")."
+        )
     session = _current_session.get()
     span_id = uuid.uuid4().hex
     parent_id = _current_span_id.get()
@@ -410,10 +421,18 @@ def instrument(
     Args:
         func: The function to instrument.
         name: Step name (defaults to ``func.__name__``).
-        goal: Quality goal for the judge.
+        goal: **Required.** Quality goal for the judge.
         description: What this function does.
         tags: Labels for grouping/filtering.
         role: Semantic role in the architecture.
+
+    Raises:
+        TypeError: If *goal* is not provided.
     """
     actual_name = name or getattr(func, "__name__", repr(func))
+    if not goal:
+        raise TypeError(
+            f"instrument() requires a goal — use "
+            f"instrument({actual_name}, goal=\"...\")."
+        )
     return _trace_decorator(actual_name, description, goal, None, tags, role)(func)
