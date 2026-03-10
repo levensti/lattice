@@ -2,25 +2,50 @@
 
 from .bottleneck import BottleneckResult, find_bottlenecks
 from .config import AgentTraceConfig, configure, get_config
-from .context import StepRecord, TraceSession, get_current_session, trace_session
-from .decorators import step
+from .context import (
+    GroupRecord,
+    LoopContext,
+    StepRecord,
+    TraceSession,
+    TransitionRecord,
+    copy_trace_context,
+    get_current_session,
+    trace_activation,
+    trace_iterations,
+    trace_loop,
+    trace_parallel,
+    trace_session,
+    trace_transition,
+)
+from .decorators import instrument, step, trace_step
 from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
 from .logging_utils import print_trace_summary
 
 __all__ = [
     "AgentTraceConfig",
     "BottleneckResult",
+    "GroupRecord",
+    "LoopContext",
     "StepRecord",
     "TraceSession",
+    "TransitionRecord",
     "async_score_session",
     "async_score_trace",
     "configure",
+    "copy_trace_context",
     "find_bottlenecks",
     "get_config",
     "get_current_session",
+    "instrument",
     "print_trace_summary",
     "score_session",
     "score_trace",
     "step",
+    "trace_activation",
+    "trace_iterations",
+    "trace_loop",
+    "trace_parallel",
     "trace_session",
+    "trace_step",
+    "trace_transition",
 ]

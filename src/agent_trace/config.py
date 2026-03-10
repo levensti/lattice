@@ -24,7 +24,7 @@ def configure(**kwargs) -> AgentTraceConfig:
     global _config
     kwargs.setdefault("judge_api_key", os.environ.get("OPENAI_API_KEY"))
     _config = AgentTraceConfig(**kwargs)
-    if _config.otel_enabled:
+    if _config.otel_enabled and _config.otel_endpoint:
         from .otel import setup_tracer
 
         setup_tracer(_config.service_name, _config.otel_endpoint)
