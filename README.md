@@ -1,8 +1,8 @@
 # Lattice
 
-You built a multi-agent system. It works... sometimes. **Which step is the bottleneck?**
+Find the bottleneck in multi-agent system.
 
-Lattice adds a decorator to your existing code, scores each step against its goal with an LLM judge, and tells you exactly where quality breaks down — across pipelines, loops, parallel fan-outs, and state machines.
+Lattice is a lightweight debugging framework for developers with existing agent pipelines. It traces each step, scores it against a defined goal using an LLM judge, and surfaces the steps where quality degrades.
 
 ## Install
 
@@ -89,14 +89,14 @@ with trace_session(goal="Find and summarize relevant results") as session:
 
 ### More patterns
 
-| Pattern | How | Example |
-|---|---|---|
-| State machine | `trace_transition(to=..., reason=...)` | `state_machine_example.py` |
-| Orchestrator + subagents | Automatic from the call graph | `multi_agent_example.py` |
-| Evaluator-optimizer | `trace_iterations` with `role="generator"` / `"evaluator"` | `eval_optimizer_example.py` |
-| Blackboard / event-driven | `trace_activation(reason=...)` | — |
-| Thread-based parallelism | `copy_trace_context()` | — |
-| Retrofitting existing code | `instrument()` + `trace_step` | `retrofit_example.py` |
+| Pattern                    | How                                                        | Example                     |
+| -------------------------- | ---------------------------------------------------------- | --------------------------- |
+| State machine              | `trace_transition(to=..., reason=...)`                     | `state_machine_example.py`  |
+| Orchestrator + subagents   | Automatic from the call graph                              | `multi_agent_example.py`    |
+| Evaluator-optimizer        | `trace_iterations` with `role="generator"` / `"evaluator"` | `eval_optimizer_example.py` |
+| Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                           |
+| Thread-based parallelism   | `copy_trace_context()`                                     | —                           |
+| Retrofitting existing code | `instrument()` + `trace_step`                              | `retrofit_example.py`       |
 
 ## Scoring
 
@@ -108,12 +108,12 @@ score_trace(session, model="claude-sonnet-4-20250514")  # uses ANTHROPIC_API_KEY
 score_trace(session, model="google/gemini-2.0-flash")   # uses OPENROUTER_API_KEY
 ```
 
-| Model name | Routes to | Env var |
-|---|---|---|
-| `gpt-*`, `o1-*`, `o3-*`, `o4-*` | OpenAI | `OPENAI_API_KEY` |
-| `claude-*` | Anthropic | `ANTHROPIC_API_KEY` |
-| Names containing `/` | OpenRouter | `OPENROUTER_API_KEY` |
-| Anything else | OpenRouter | `OPENROUTER_API_KEY` |
+| Model name                      | Routes to  | Env var              |
+| ------------------------------- | ---------- | -------------------- |
+| `gpt-*`, `o1-*`, `o3-*`, `o4-*` | OpenAI     | `OPENAI_API_KEY`     |
+| `claude-*`                      | Anthropic  | `ANTHROPIC_API_KEY`  |
+| Names containing `/`            | OpenRouter | `OPENROUTER_API_KEY` |
+| Anything else                   | OpenRouter | `OPENROUTER_API_KEY` |
 
 You can also pass `api_key=` explicitly or a custom `provider=` instance. Use `async_score_trace` for concurrent scoring.
 
@@ -124,14 +124,14 @@ for b in find_bottlenecks(session):
     print(f"{b.step_name}: score={b.score}, impact={b.impact}")
 ```
 
-| Impact | Meaning |
-|---|---|
-| `"error"` | Step raised an exception |
-| `"lowest_score"` | Worst-scoring step in the session |
-| `"largest_drop"` | Biggest quality drop from the preceding step |
-| `"below_average"` | Below the session average |
-| `"loop_no_convergence"` | Scores didn't improve across loop iterations |
-| `"weakest_branch"` | Worst parallel branch, significantly below group average |
+| Impact                  | Meaning                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `"error"`               | Step raised an exception                                 |
+| `"lowest_score"`        | Worst-scoring step in the session                        |
+| `"largest_drop"`        | Biggest quality drop from the preceding step             |
+| `"below_average"`       | Below the session average                                |
+| `"loop_no_convergence"` | Scores didn't improve across loop iterations             |
+| `"weakest_branch"`      | Worst parallel branch, significantly below group average |
 
 ## Configuration
 
