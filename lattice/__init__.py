@@ -28,6 +28,7 @@ from .judge.prompt_builder import (
 from .judge.providers import JudgeProvider
 from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
 from .logging_utils import print_trace_summary
+from .store import configure, traces
 
 __all__ = [
     "BottleneckResult",
@@ -46,6 +47,7 @@ __all__ = [
     "TransitionRecord",
     "async_score_session",
     "async_score_trace",
+    "configure",
     "copy_trace_context",
     "find_bottlenecks",
     "get_current_session",
@@ -54,6 +56,7 @@ __all__ = [
     "score_session",
     "score_trace",
     "step",
+    "traces",
     "trace_activation",
     "trace_iterations",
     "trace_loop",
