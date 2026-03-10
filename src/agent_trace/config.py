@@ -20,9 +20,30 @@ _config: AgentTraceConfig | None = None
 
 
 def configure(**kwargs) -> AgentTraceConfig:
-    """Initialize agent-trace with the given settings."""
+    """Initialize agent-trace with the given settings.
+
+    When *judge_model* is provided without an explicit *judge_provider*,
+    the provider, API base URL, and API key environment variable are
+    inferred automatically from the model name:
+
+    - ``gpt-*``, ``o1-*``, ``o3-*``, ``o4-*`` → OpenAI (``OPENAI_API_KEY``)
+    - ``claude-*`` → Anthropic (``ANTHROPIC_API_KEY``)
+    - Names containing ``/`` or unrecognised → OpenRouter (``OPENROUTER_API_KEY``)
+    """
     global _config
-    kwargs.setdefault("judge_api_key", os.environ.get("OPENAI_API_KEY"))
+
+    model = kwargs.get("judge_model", "gpt-4o")
+
+    if "judge_provider" not in kwargs:
+        from .judge.providers import _route_model
+
+        provider_name, api_base, env_var = _route_model(model)
+        kwargs.setdefault("judge_provider", provider_name)
+        kwargs.setdefault("judge_api_base", api_base)
+        kwargs.setdefault("judge_api_key", os.environ.get(env_var))
+    else:
+        kwargs.setdefault("judge_api_key", os.environ.get("OPENAI_API_KEY"))
+
     _config = AgentTraceConfig(**kwargs)
     if _config.otel_enabled and _config.otel_endpoint:
         from .otel import setup_tracer

@@ -36,12 +36,12 @@ with trace_session() as session:
     notes = researcher("quantum computing")
     article = writer(notes)
 
-score_trace(session)
+score_trace(session, model="gpt-4o")
 for b in find_bottlenecks(session):
     print(f"{b.step_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
 
-No `configure()` call needed for basic tracing. Call `configure()` only when you want OTel export or to set the judge model.
+No `configure()` call needed. Pass `model=` to `score_trace` and the provider, API base, and API key are inferred automatically (see [Scoring](#scoring)).
 
 ## Three Ways to Trace
 
@@ -200,17 +200,27 @@ with ThreadPoolExecutor() as pool:
 
 ### Configuration
 
+`configure()` is **optional**. Tracing works without it. You only need it for OTel export or to set global defaults for the judge model.
+
 ```python
 configure(
     service_name="my-app",          # OpenTelemetry service name
     otel_endpoint="localhost:4317", # OTLP gRPC endpoint (required to enable OTel)
-    judge_provider="openai",        # "openai" or "anthropic"
-    judge_model="gpt-4o",           # model for the judge LLM
-    judge_api_key="sk-...",         # defaults to OPENAI_API_KEY env var
+    judge_model="gpt-4o",           # model for the judge LLM (provider auto-detected)
+    judge_api_key="sk-...",         # defaults to env var based on model (see below)
 )
 ```
 
-Calling `configure()` is **optional**. Tracing works without it. You only need it for OTel export (requires an endpoint) or to configure the judge.
+When you set `judge_model`, the provider and API base are **inferred automatically**:
+
+| Model name | Routes to | Env var |
+|---|---|---|
+| `gpt-*`, `o1-*`, `o3-*`, `o4-*` | OpenAI | `OPENAI_API_KEY` |
+| `claude-*` | Anthropic | `ANTHROPIC_API_KEY` |
+| `openai/gpt-4o`, `google/gemini-2.0-flash`, … | OpenRouter | `OPENROUTER_API_KEY` |
+| Anything else | OpenRouter | `OPENROUTER_API_KEY` |
+
+You can still override explicitly with `judge_provider=` and `judge_api_base=` if needed.
 
 ### The `@step` Decorator
 
@@ -247,11 +257,21 @@ print(session.transitions)  # list of TransitionRecord
 
 ### Scoring
 
-```python
-score_trace(session)                              # synchronous
-await async_score_trace(session, max_concurrency=5)  # async
+The simplest way to score is to pass `model=` directly — the provider and API key are resolved automatically:
 
-# Bring your own provider
+```python
+score_trace(session, model="gpt-4o")              # uses OPENAI_API_KEY
+score_trace(session, model="claude-sonnet-4-20250514")  # uses ANTHROPIC_API_KEY
+score_trace(session, model="google/gemini-2.0-flash")   # uses OPENROUTER_API_KEY
+
+await async_score_trace(session, model="gpt-4o", max_concurrency=5)
+```
+
+You can also pass `api_key=` explicitly, or bring your own provider:
+
+```python
+score_trace(session, model="gpt-4o", api_key="sk-...")
+
 from agent_trace.judge.providers import AnthropicJudgeProvider
 provider = AnthropicJudgeProvider(api_key="sk-ant-...")
 score_trace(session, provider=provider)
