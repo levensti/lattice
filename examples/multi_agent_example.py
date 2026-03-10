@@ -48,7 +48,7 @@ def editor(article: str) -> str:
 
 
 def main():
-    with trace_session() as session:
+    with trace_session(goal="Produce a high-quality, publication-ready article about the given topic") as session:
         research = researcher("Python programming")
         draft = writer(research)
         final = editor(draft)

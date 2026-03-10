@@ -42,7 +42,7 @@ def main():
     result = None
     feedback = None
 
-    with trace_session(workflow_name="Eval-Optimizer") as session:
+    with trace_session(workflow_name="Eval-Optimizer", goal="Produce a clear, informative paragraph that passes quality evaluation") as session:
         iters = trace_iterations("generate_eval", range(5))
         for attempt in iters:
             draft = generate(topic, feedback=feedback, attempt=attempt)

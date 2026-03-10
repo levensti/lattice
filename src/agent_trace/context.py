@@ -295,14 +295,15 @@ def trace_session(
     trace_id: str | None = None,
     *,
     workflow_name: str = "",
-    goal: str = "",
+    goal: str,
 ):
     """Context manager that groups decorated calls into a single trace.
 
     Args:
         trace_id: Custom trace ID (auto-generated if omitted).
         workflow_name: Human-readable name for this workflow.
-        goal: The desired outcome — used for auto-judging results.
+        goal: **Required.** The desired outcome of the workflow — used
+            for session-level scoring via :func:`score_session`.
     """
     session = TraceSession(
         trace_id=trace_id or uuid.uuid4().hex,
