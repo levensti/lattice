@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from lattice import step, trace_session, traces
+from lattice import action, trace_session, traces
 from lattice.context import TraceSession
 from lattice.store import (
     _DEFAULT_DB_PATH,
@@ -114,7 +114,7 @@ def test_session_score_roundtrips():
 
 
 def test_trace_session_auto_persists():
-    @step(goal="say hi")
+    @action(goal="say hi")
     def greet(name: str) -> str:
         return f"Hello, {name}!"
 

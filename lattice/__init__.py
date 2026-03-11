@@ -17,7 +17,7 @@ from .context import (
     trace_session,
     trace_transition,
 )
-from .decorators import instrument, step, trace_step
+from .decorators import action, instrument, trace_step
 from .judge.prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     RATING_SCALE,
@@ -55,7 +55,7 @@ __all__ = [
     "print_trace_summary",
     "score_session",
     "score_trace",
-    "step",
+    "action",
     "traces",
     "trace_activation",
     "trace_iterations",

@@ -9,13 +9,13 @@ Usage:
 
 from lattice import (
     print_trace_summary,
-    step,
+    action,
     trace_iterations,
     trace_session,
 )
 
 
-@step(goal="Decide which tool to call next", role="think")
+@action(goal="Decide which tool to call next", role="think")
 def think(state: dict) -> dict:
     if not state.get("search_done"):
         return {"action": "search", "query": state["question"]}
@@ -24,7 +24,7 @@ def think(state: dict) -> dict:
     return {"action": "finish", "result": state["answer"]}
 
 
-@step(goal="Execute the chosen tool accurately", role="act")
+@action(goal="Execute the chosen tool accurately", role="act")
 def act(plan: dict) -> dict:
     if plan["action"] == "search":
         return {"type": "search_result", "data": f"Results for: {plan['query']}"}
@@ -33,7 +33,7 @@ def act(plan: dict) -> dict:
     return {"type": "final", "data": plan["result"]}
 
 
-@step(goal="Update state correctly from tool output", role="observe")
+@action(goal="Update state correctly from tool output", role="observe")
 def observe(state: dict, result: dict) -> dict:
     new_state = dict(state)
     if result["type"] == "search_result":

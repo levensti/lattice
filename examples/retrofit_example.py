@@ -3,13 +3,13 @@
 Shows three ways to add tracing without modifying original source:
   1. instrument() — wrap an existing function
   2. trace_step  — context manager for arbitrary code blocks
-  3. @step on a class — self is automatically excluded from inputs
+  3. @action on a class — self is automatically excluded from inputs
 
 Usage:
     python examples/retrofit_example.py
 """
 
-from lattice import instrument, print_trace_summary, step, trace_session, trace_step
+from lattice import action, instrument, print_trace_summary, trace_session, trace_step
 
 
 # === Existing code (imagine this lives in another module) ================
@@ -61,14 +61,14 @@ def main():
     print(f"Agent result: {result}")
     print(f"API result: {api_result}")
 
-    # 3. @step on a class method — self is excluded from traced inputs
+    # 3. @action on a class method — self is excluded from traced inputs
     print("\n--- Class method decoration ---")
 
     class TracedAgent:
         def __init__(self):
             self.state = {"large": "object", "with": "lots", "of": "fields"}
 
-        @step(goal="Process the input efficiently")
+        @action(goal="Process the input efficiently")
         def process(self, data: str) -> str:
             return f"Processed: {data}"
 
