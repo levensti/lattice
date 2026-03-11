@@ -196,7 +196,7 @@ def _trace_decorator(
     return decorator
 
 
-def step(
+def action(
     _func=None,
     *,
     name: str | None = None,
@@ -206,19 +206,19 @@ def step(
     tags: Sequence[str] = (),
     role: str | None = None,
 ) -> Callable:
-    """Decorator to trace a step in a workflow.
+    """Decorator to trace an action in a workflow.
 
-    A ``goal`` is required so the judge can evaluate step quality::
+    A ``goal`` is required so the judge can evaluate quality::
 
-        @step(goal="Must cite sources")
+        @action(goal="Must cite sources")
         def research(topic): ...
 
-        @step(goal="Decide which tool to call", role="think")
+        @action(goal="Decide which tool to call", role="think")
         def think(state): ...
 
     Args:
-        name: Step name (defaults to the function's ``__name__``).
-        description: What this step does.
+        name: Action name (defaults to the function's ``__name__``).
+        description: What this action does.
         goal: **Required.** What success looks like — the judge evaluates
             against this.
         step_id: Custom span ID (auto-generated if omitted).
@@ -239,8 +239,8 @@ def step(
         actual_name = name if name is not None else func.__name__
         if not goal:
             raise TypeError(
-                f"@step requires a goal — use @step(goal=\"...\") "
-                f"instead of bare @step on '{actual_name}'."
+                f"@action requires a goal — use @action(goal=\"...\") "
+                f"instead of bare @action on '{actual_name}'."
             )
         return _trace_decorator(actual_name, description, goal, step_id, tags, role)(func)
 
@@ -274,7 +274,7 @@ def trace_step(
 ):
     """Context manager for tracing code you don't own or can't decorate.
 
-    Use this when the ``@step`` decorator isn't applicable — for example,
+    Use this when the ``@action`` decorator isn't applicable — for example,
     when calling third-party functions or wrapping a block of code that
     isn't a single function call::
 

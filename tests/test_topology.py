@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from lattice import step, trace_session
+from lattice import action, trace_session
 from lattice.context import (
     trace_activation,
     trace_iterations,
@@ -18,7 +18,7 @@ from lattice.context import (
 
 
 def test_loop_groups_steps_by_iteration():
-    @step(goal="do work")
+    @action(goal="do work")
     def work(x: int) -> int:
         return x + 1
 
@@ -41,7 +41,7 @@ def test_loop_groups_steps_by_iteration():
 
 
 def test_loop_iteration_yields_number():
-    @step(goal="no-op")
+    @action(goal="no-op")
     def noop() -> None:
         pass
 
@@ -57,11 +57,11 @@ def test_loop_iteration_yields_number():
 
 
 def test_loop_steps_outside_iteration_have_no_iteration():
-    @step(goal="inside work")
+    @action(goal="inside work")
     def inside() -> None:
         pass
 
-    @step(goal="outside work")
+    @action(goal="outside work")
     def outside() -> None:
         pass
 
@@ -83,7 +83,7 @@ def test_loop_steps_outside_iteration_have_no_iteration():
 
 
 def test_trace_iterations_basic():
-    @step(goal="work")
+    @action(goal="work")
     def work(x: int) -> int:
         return x + 1
 
@@ -100,7 +100,7 @@ def test_trace_iterations_basic():
 
 
 def test_trace_iterations_early_break():
-    @step(goal="do work")
+    @action(goal="do work")
     def work() -> None:
         pass
 
@@ -137,11 +137,11 @@ def test_trace_iterations_iteration_count():
 
 
 def test_parallel_marks_concurrent_steps():
-    @step(goal="branch a")
+    @action(goal="branch a")
     async def branch_a() -> str:
         return "a"
 
-    @step(goal="branch b")
+    @action(goal="branch b")
     async def branch_b() -> str:
         return "b"
 
@@ -163,11 +163,11 @@ def test_parallel_marks_concurrent_steps():
 
 
 def test_parallel_sync_steps():
-    @step(goal="task a")
+    @action(goal="task a")
     def task_a() -> str:
         return "a"
 
-    @step(goal="task b")
+    @action(goal="task b")
     def task_b() -> str:
         return "b"
 
@@ -185,7 +185,7 @@ def test_parallel_sync_steps():
 
 
 def test_transition_recorded():
-    @step(goal="route request")
+    @action(goal="route request")
     def router(choice: str) -> str:
         trace_transition(to=choice, reason=f"chose {choice}")
         return choice
@@ -202,7 +202,7 @@ def test_transition_recorded():
 
 
 def test_transition_captures_from_span():
-    @step(step_id="src-span", goal="emit transition")
+    @action(step_id="src-span", goal="emit transition")
     def source() -> str:
         trace_transition(to="target", reason="go")
         return "done"
@@ -218,7 +218,7 @@ def test_transition_captures_from_span():
 
 
 def test_activation_reason_recorded():
-    @step(goal="respond to event")
+    @action(goal="respond to event")
     def listener() -> str:
         return "handled"
 
@@ -230,11 +230,11 @@ def test_activation_reason_recorded():
 
 
 def test_activation_reason_clears_after_context():
-    @step(goal="handle activation")
+    @action(goal="handle activation")
     def activated() -> str:
         return "yes"
 
-    @step(goal="normal work")
+    @action(goal="normal work")
     def normal() -> str:
         return "no"
 
@@ -251,11 +251,11 @@ def test_activation_reason_clears_after_context():
 
 
 def test_role_recorded_on_step():
-    @step(goal="generate", role="generator")
+    @action(goal="generate", role="generator")
     def gen() -> str:
         return "output"
 
-    @step(goal="evaluate", role="evaluator")
+    @action(goal="evaluate", role="evaluator")
     def eval_fn(text: str) -> dict:
         return {"pass": True}
 
@@ -268,7 +268,7 @@ def test_role_recorded_on_step():
 
 
 def test_role_defaults_to_none():
-    @step(goal="plain work")
+    @action(goal="plain work")
     def plain() -> str:
         return "x"
 
@@ -282,11 +282,11 @@ def test_role_defaults_to_none():
 
 
 def test_loop_inside_step_inherits_parent():
-    @step(goal="inner work")
+    @action(goal="inner work")
     def inner() -> str:
         return "done"
 
-    @step(goal="outer work")
+    @action(goal="outer work")
     def outer() -> str:
         with trace_loop("nested") as loop:
             with loop.iteration():

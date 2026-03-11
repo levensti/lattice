@@ -11,31 +11,31 @@ import asyncio
 
 from lattice import (
     print_trace_summary,
-    step,
+    action,
     trace_parallel,
     trace_session,
 )
 
 
-@step(goal="Return relevant web results", role="searcher")
+@action(goal="Return relevant web results", role="searcher")
 async def search_web(query: str) -> list[str]:
     await asyncio.sleep(0.01)
     return [f"Web result 1 for '{query}'", f"Web result 2 for '{query}'"]
 
 
-@step(goal="Return relevant database records", role="searcher")
+@action(goal="Return relevant database records", role="searcher")
 async def search_db(query: str) -> list[str]:
     await asyncio.sleep(0.01)
     return [f"DB record for '{query}'"]
 
 
-@step(goal="Return cached results if available", role="searcher")
+@action(goal="Return cached results if available", role="searcher")
 async def search_cache(query: str) -> list[str]:
     await asyncio.sleep(0.005)
     return []
 
 
-@step(goal="Merge results from all sources into a coherent summary", role="aggregator")
+@action(goal="Merge results from all sources into a coherent summary", role="aggregator")
 async def aggregate(results: list[list[str]]) -> str:
     flat = [item for sublist in results for item in sublist]
     if not flat:

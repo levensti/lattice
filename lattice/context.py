@@ -120,7 +120,7 @@ class LoopContext:
     def iteration(self):
         """Mark the boundary of one loop iteration.
 
-        All ``@step`` calls inside this context are tagged with the
+        All ``@action`` calls inside this context are tagged with the
         current iteration number.
         """
         iter_num = self._iteration_count
@@ -257,12 +257,12 @@ def trace_parallel(name: str):
 def trace_transition(*, to: str, reason: str = "") -> None:
     """Record a routing decision from the current step.
 
-    Call inside a ``@step``-decorated function to capture why control
+    Call inside a ``@action``-decorated function to capture why control
     is being transferred to a particular next step.
 
     Usage::
 
-        @step(name="router", ...)
+        @action(name="router", ...)
         def router(state):
             if state.needs_retry:
                 trace_transition(to="retry", reason="validation failed")

@@ -10,13 +10,13 @@ Usage:
 
 from lattice import (
     print_trace_summary,
-    step,
+    action,
     trace_session,
     trace_transition,
 )
 
 
-@step(goal="Check input for required fields and format")
+@action(goal="Check input for required fields and format")
 def validate(data: dict) -> dict:
     errors = []
     if not data.get("name"):
@@ -26,24 +26,24 @@ def validate(data: dict) -> dict:
     return {"valid": len(errors) == 0, "errors": errors, "data": data}
 
 
-@step(goal="Add derived fields to the validated record")
+@action(goal="Add derived fields to the validated record")
 def enrich(data: dict) -> dict:
     data["username"] = data["name"].lower().replace(" ", "_")
     data["domain"] = data["email"].split("@")[-1]
     return data
 
 
-@step(goal="Persist the record successfully")
+@action(goal="Persist the record successfully")
 def save(data: dict) -> dict:
     return {"saved": True, "id": 42, **data}
 
 
-@step(goal="Produce a helpful error response")
+@action(goal="Produce a helpful error response")
 def handle_error(errors: list[str]) -> dict:
     return {"saved": False, "errors": errors, "suggestion": "Please fix the errors and retry."}
 
 
-@step(goal="Route to the correct next step based on state")
+@action(goal="Route to the correct next step based on state")
 def router(state: dict) -> dict:
     if state.get("step") == "start":
         result = validate(state["data"])

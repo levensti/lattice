@@ -2,15 +2,15 @@ import asyncio
 
 import pytest
 
-from lattice import step, trace_session
+from lattice import action, trace_session
 from lattice.decorators import instrument, trace_step
 
 
-# ── @step decorator tests ──────────────────────────────────────────────
+# ── @action decorator tests ──────────────────────────────────────────────
 
 
 def test_sync_step_recorded():
-    @step(name="greeter", goal="Must greet by name")
+    @action(name="greeter", goal="Must greet by name")
     def greet(name: str) -> str:
         return f"Hello, {name}!"
 
@@ -28,7 +28,7 @@ def test_sync_step_recorded():
 
 
 def test_async_step_recorded():
-    @step(name="async_greeter", goal="Must greet")
+    @action(name="async_greeter", goal="Must greet")
     async def greet(name: str) -> str:
         return f"Hi, {name}!"
 
@@ -44,7 +44,7 @@ def test_async_step_recorded():
 
 
 def test_step_with_tags():
-    @step(name="search", goal="Return results", tags=["io", "external"])
+    @action(name="search", goal="Return results", tags=["io", "external"])
     def search(query: str) -> list:
         return [{"title": "result"}]
 
@@ -55,11 +55,11 @@ def test_step_with_tags():
 
 
 def test_step_nested_spans():
-    @step(name="inner", goal="inner criteria")
+    @action(name="inner", goal="inner criteria")
     def inner_fn(x: int) -> int:
         return x * 2
 
-    @step(name="outer", goal="outer criteria")
+    @action(name="outer", goal="outer criteria")
     def outer_fn(x: int) -> int:
         return inner_fn(x) + 1
 
@@ -74,7 +74,7 @@ def test_step_nested_spans():
 
 
 def test_step_error_captured():
-    @step(name="failer", goal="Should not fail")
+    @action(name="failer", goal="Should not fail")
     def failing() -> str:
         raise ValueError("something went wrong")
 
@@ -87,7 +87,7 @@ def test_step_error_captured():
 
 
 def test_step_no_session_passthrough():
-    @step(name="standalone", goal="criteria")
+    @action(name="standalone", goal="criteria")
     def standalone(x: int) -> int:
         return x + 1
 
@@ -95,15 +95,15 @@ def test_step_no_session_passthrough():
 
 
 def test_step_ordering():
-    @step(name="step_a", goal="a")
+    @action(name="step_a", goal="a")
     def step_a() -> str:
         return "a"
 
-    @step(name="step_b", goal="b")
+    @action(name="step_b", goal="b")
     def step_b() -> str:
         return "b"
 
-    @step(name="step_c", goal="c")
+    @action(name="step_c", goal="c")
     def step_c() -> str:
         return "c"
 
@@ -120,7 +120,7 @@ def test_step_ordering():
 
 
 def test_step_name_inferred_from_function():
-    @step(goal="must work")
+    @action(goal="must work")
     def my_function() -> str:
         return "ok"
 
@@ -130,29 +130,29 @@ def test_step_name_inferred_from_function():
     assert session.steps[0].name == "my_function"
 
 
-def test_step_bare_decorator_raises():
+def test_action_bare_decorator_raises():
     with pytest.raises(TypeError, match="requires a goal"):
-        @step
+        @action
         def bare() -> str:
             return "bare"
 
 
-def test_step_bare_parens_raises():
+def test_action_bare_parens_raises():
     with pytest.raises(TypeError, match="requires a goal"):
-        @step()
+        @action()
         def empty_parens() -> str:
             return "ok"
 
 
-def test_step_positional_name_raises():
+def test_action_positional_name_raises():
     with pytest.raises(TypeError, match="requires a goal"):
-        @step("custom_name")
+        @action("custom_name")
         def original() -> str:
             return "ok"
 
 
 def test_step_explicit_name_overrides():
-    @step(name="explicit", goal="test")
+    @action(name="explicit", goal="test")
     def inferred() -> str:
         return "ok"
 
@@ -167,7 +167,7 @@ def test_step_explicit_name_overrides():
 
 def test_self_excluded_from_input():
     class MyAgent:
-        @step(goal="process data")
+        @action(goal="process data")
         def process(self, data: str) -> str:
             return f"processed {data}"
 
@@ -182,7 +182,7 @@ def test_self_excluded_from_input():
 def test_cls_excluded_from_input():
     class MyService:
         @classmethod
-        @step(goal="class method")
+        @action(goal="class method")
         def create(cls, name: str) -> str:
             return f"created {name}"
 
@@ -231,7 +231,7 @@ def test_trace_step_with_input():
 
 
 def test_trace_step_nested_under_decorator():
-    @step(goal="parent step")
+    @action(goal="parent step")
     def parent() -> str:
         with trace_step("child_block", goal="inner work") as ts:
             ts.set_output("inner result")
@@ -324,12 +324,12 @@ def test_instrument_bound_method():
 
 
 def test_auto_transitions_from_call_graph():
-    @step(goal="orchestrate")
+    @action(goal="orchestrate")
     def parent_fn() -> str:
         child_fn()
         return "done"
 
-    @step(goal="do child work")
+    @action(goal="do child work")
     def child_fn() -> str:
         return "child"
 
@@ -344,13 +344,13 @@ def test_auto_transitions_from_call_graph():
 def test_manual_transition_preferred_over_auto():
     from lattice import trace_transition
 
-    @step(goal="route to target")
+    @action(goal="route to target")
     def router() -> str:
         trace_transition(to="target", reason="custom reason")
         target()
         return "done"
 
-    @step(goal="handle request")
+    @action(goal="handle request")
     def target() -> str:
         return "hi"
 

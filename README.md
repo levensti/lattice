@@ -13,13 +13,13 @@ pip install -e .
 ## Quick Start
 
 ```python
-from lattice import step, trace_session, score_trace, find_bottlenecks
+from lattice import action, trace_session, score_trace, find_bottlenecks
 
-@step(goal="Must return at least 3 factual claims with sources")
+@action(goal="Must return at least 3 factual claims with sources")
 def researcher(topic: str) -> str:
     return call_llm(f"Research {topic}")
 
-@step(goal="Must have introduction, body, and conclusion")
+@action(goal="Must have introduction, body, and conclusion")
 def writer(notes: str) -> str:
     return call_llm(f"Write article from: {notes}")
 
@@ -32,23 +32,23 @@ for b in find_bottlenecks(session):
     print(f"{b.step_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
 
-Every `@step` and `trace_session` requires a `goal` — this is what the judge evaluates against. Traces are automatically saved to a local SQLite database so you can query and visualize them later.
+Every `@action` and `trace_session` requires a `goal` — this is what the judge evaluates against. Traces are automatically saved to a local SQLite database so you can query and visualize them later.
 
 ## Tracing
 
-### `@step` — for functions you own
+### `@action` — for functions you own
 
 ```python
-@step(goal="Must cite sources")
+@action(goal="Must cite sources")
 def research(topic): ...
 
-@step(goal="Decide the next action", role="think")
+@action(goal="Decide the next action", role="think")
 def think(state): ...
 ```
 
 Works on sync and async functions. Works on methods (`self` and `cls` are excluded from traced inputs).
 
-### `trace_step` / `instrument` — for code you don't own
+### `trace_step` / `instrument()` — for code you don't own
 
 ```python
 with trace_step("api_call", goal="Return relevant results") as ts:
