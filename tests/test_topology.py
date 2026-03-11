@@ -28,14 +28,14 @@ def test_loop_groups_steps_by_iteration():
                 with loop.iteration():
                     work(1)
 
-    assert len(session.steps) == 3
+    assert len(session.actions) == 3
     assert len(session.groups) == 1
     assert session.groups[0].group_type == "loop"
     assert session.groups[0].name == "my_loop"
     assert loop.iteration_count == 3
 
     group_id = session.groups[0].group_id
-    for i, s in enumerate(session.steps):
+    for i, s in enumerate(session.actions):
         assert s.group_id == group_id
         assert s.iteration == i
 
@@ -71,12 +71,12 @@ def test_loop_steps_outside_iteration_have_no_iteration():
             with loop.iteration():
                 inside()
 
-    outside_step = next(s for s in session.steps if s.name == "outside")
-    inside_step = next(s for s in session.steps if s.name == "inside")
-    assert outside_step.iteration is None
-    assert inside_step.iteration == 0
-    assert outside_step.group_id is not None
-    assert inside_step.group_id == outside_step.group_id
+    outside_action = next(s for s in session.actions if s.name == "outside")
+    inside_action = next(s for s in session.actions if s.name == "inside")
+    assert outside_action.iteration is None
+    assert inside_action.iteration == 0
+    assert outside_action.group_id is not None
+    assert inside_action.group_id == outside_action.group_id
 
 
 # ── trace_iterations ──────────────────────────────────────────────────
@@ -91,11 +91,11 @@ def test_trace_iterations_basic():
         for i in trace_iterations("my_loop", range(3)):
             work(i)
 
-    assert len(session.steps) == 3
+    assert len(session.actions) == 3
     assert len(session.groups) == 1
     assert session.groups[0].group_type == "loop"
     assert session.groups[0].name == "my_loop"
-    for i, s in enumerate(session.steps):
+    for i, s in enumerate(session.actions):
         assert s.iteration == i
 
 
@@ -112,7 +112,7 @@ def test_trace_iterations_early_break():
                 break
 
     assert iters.iteration_count == 3
-    assert len(session.steps) == 3
+    assert len(session.actions) == 3
 
 
 def test_trace_iterations_yields_original_values():
@@ -152,13 +152,13 @@ def test_parallel_marks_concurrent_steps():
         return session
 
     session = asyncio.run(_run())
-    assert len(session.steps) == 2
+    assert len(session.actions) == 2
     assert len(session.groups) == 1
     assert session.groups[0].group_type == "parallel"
     assert session.groups[0].name == "fanout"
 
     group_id = session.groups[0].group_id
-    for s in session.steps:
+    for s in session.actions:
         assert s.group_id == group_id
 
 
@@ -178,7 +178,7 @@ def test_parallel_sync_steps():
 
     assert len(session.groups) == 1
     group_id = session.groups[0].group_id
-    assert all(s.group_id == group_id for s in session.steps)
+    assert all(s.group_id == group_id for s in session.actions)
 
 
 # ── trace_transition ───────────────────────────────────────────────────
@@ -202,7 +202,7 @@ def test_transition_recorded():
 
 
 def test_transition_captures_from_span():
-    @action(step_id="src-span", goal="emit transition")
+    @action(action_id="src-span", goal="emit transition")
     def source() -> str:
         trace_transition(to="target", reason="go")
         return "done"
@@ -226,7 +226,7 @@ def test_activation_reason_recorded():
         with trace_activation(reason="state X changed"):
             listener()
 
-    assert session.steps[0].activation_reason == "state X changed"
+    assert session.actions[0].activation_reason == "state X changed"
 
 
 def test_activation_reason_clears_after_context():
@@ -243,8 +243,8 @@ def test_activation_reason_clears_after_context():
             activated()
         normal()
 
-    assert session.steps[0].activation_reason == "event fired"
-    assert session.steps[1].activation_reason is None
+    assert session.actions[0].activation_reason == "event fired"
+    assert session.actions[1].activation_reason is None
 
 
 # ── role parameter ────────────────────────────────────────────────────
@@ -263,8 +263,8 @@ def test_role_recorded_on_step():
         text = gen()
         eval_fn(text)
 
-    assert session.steps[0].role == "generator"
-    assert session.steps[1].role == "evaluator"
+    assert session.actions[0].role == "generator"
+    assert session.actions[1].role == "evaluator"
 
 
 def test_role_defaults_to_none():
@@ -275,7 +275,7 @@ def test_role_defaults_to_none():
     with trace_session(goal="test") as session:
         plain()
 
-    assert session.steps[0].role is None
+    assert session.actions[0].role is None
 
 
 # ── nesting ───────────────────────────────────────────────────────────
@@ -296,8 +296,8 @@ def test_loop_inside_step_inherits_parent():
     with trace_session(goal="test") as session:
         outer()
 
-    inner_step = next(s for s in session.steps if s.name == "inner")
-    outer_step = next(s for s in session.steps if s.name == "outer")
-    assert inner_step.parent_span_id == outer_step.span_id
-    assert inner_step.group_id is not None
-    assert inner_step.iteration == 0
+    inner_action = next(s for s in session.actions if s.name == "inner")
+    outer_action = next(s for s in session.actions if s.name == "outer")
+    assert inner_action.parent_span_id == outer_action.span_id
+    assert inner_action.group_id is not None
+    assert inner_action.iteration == 0

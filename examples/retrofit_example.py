@@ -2,14 +2,14 @@
 
 Shows three ways to add tracing without modifying original source:
   1. instrument() — wrap an existing function
-  2. trace_step  — context manager for arbitrary code blocks
+  2. trace_action — context manager for arbitrary code blocks
   3. @action on a class — self is automatically excluded from inputs
 
 Usage:
     python examples/retrofit_example.py
 """
 
-from lattice import action, instrument, print_trace_summary, trace_session, trace_step
+from lattice import action, instrument, print_trace_summary, trace_session, trace_action
 
 
 # === Existing code (imagine this lives in another module) ================
@@ -47,13 +47,13 @@ def main():
     agent.summarize = instrument(agent.summarize, goal="Produce a coherent summary")
 
     with trace_session(workflow_name="Retrofit Demo", goal="Complete a research pipeline and fetch supplementary data") as session:
-        # 2. trace_step — context manager for code blocks
-        with trace_step("agent_run", goal="Complete research pipeline", input_data="Python") as ts:
+        # 2. trace_action — context manager for code blocks
+        with trace_action("agent_run", goal="Complete research pipeline", input_data="Python") as ts:
             result = agent.run("Python")
             ts.set_output(result)
 
-        # trace_step also works for third-party calls
-        with trace_step("api_call", goal="Fetch supplementary data") as ts:
+        # trace_action also works for third-party calls
+        with trace_action("api_call", goal="Fetch supplementary data") as ts:
             api_result = external_api_call("Python advanced")
             ts.set_output(api_result)
 
@@ -77,7 +77,7 @@ def main():
         agent2.process("hello")
 
     print_trace_summary(session)
-    print(f"Input recorded: {session.steps[0].input_data}")
+    print(f"Input recorded: {session.actions[0].input_data}")
     print("(Note: 'self' is excluded from the traced input)")
 
 

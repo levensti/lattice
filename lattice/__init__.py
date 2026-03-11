@@ -2,10 +2,10 @@
 
 from .bottleneck import BottleneckResult, ImpactType, find_bottlenecks
 from .context import (
+    ActionRecord,
     GroupRecord,
     GroupType,
     LoopContext,
-    StepRecord,
     TraceSession,
     TransitionRecord,
     copy_trace_context,
@@ -17,13 +17,13 @@ from .context import (
     trace_session,
     trace_transition,
 )
-from .decorators import action, instrument, trace_step
+from .decorators import action, instrument, trace_action
 from .judge.prompt_builder import (
+    ActionPromptBuilder,
     JUDGE_SYSTEM_PROMPT,
     RATING_SCALE,
     RESPONSE_FORMAT,
     SessionPromptBuilder,
-    StepPromptBuilder,
 )
 from .judge.providers import JudgeProvider
 from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
@@ -31,6 +31,9 @@ from .logging_utils import print_trace_summary
 from .store import configure, traces
 
 __all__ = [
+    "action",
+    "ActionPromptBuilder",
+    "ActionRecord",
     "BottleneckResult",
     "GroupRecord",
     "GroupType",
@@ -41,8 +44,6 @@ __all__ = [
     "RATING_SCALE",
     "RESPONSE_FORMAT",
     "SessionPromptBuilder",
-    "StepPromptBuilder",
-    "StepRecord",
     "TraceSession",
     "TransitionRecord",
     "async_score_session",
@@ -55,13 +56,12 @@ __all__ = [
     "print_trace_summary",
     "score_session",
     "score_trace",
-    "action",
-    "traces",
+    "trace_action",
     "trace_activation",
     "trace_iterations",
     "trace_loop",
     "trace_parallel",
     "trace_session",
-    "trace_step",
     "trace_transition",
+    "traces",
 ]

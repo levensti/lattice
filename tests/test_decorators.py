@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from lattice import action, trace_session
-from lattice.decorators import instrument, trace_step
+from lattice.decorators import instrument, trace_action
 
 
 # ── @action decorator tests ──────────────────────────────────────────────
@@ -18,8 +18,8 @@ def test_sync_step_recorded():
         result = greet("Alice")
 
     assert result == "Hello, Alice!"
-    assert len(session.steps) == 1
-    s = session.steps[0]
+    assert len(session.actions) == 1
+    s = session.actions[0]
     assert s.name == "greeter"
     assert '"Alice"' in s.input_data
     assert "Hello, Alice!" in s.output_data
@@ -39,8 +39,8 @@ def test_async_step_recorded():
 
     result, session = asyncio.run(_run())
     assert result == "Hi, Bob!"
-    assert len(session.steps) == 1
-    assert session.steps[0].name == "async_greeter"
+    assert len(session.actions) == 1
+    assert session.actions[0].name == "async_greeter"
 
 
 def test_step_with_tags():
@@ -51,7 +51,7 @@ def test_step_with_tags():
     with trace_session(goal="test") as session:
         search("python")
 
-    assert session.steps[0].tags == ["io", "external"]
+    assert session.actions[0].tags == ["io", "external"]
 
 
 def test_step_nested_spans():
@@ -67,10 +67,10 @@ def test_step_nested_spans():
         result = outer_fn(5)
 
     assert result == 11
-    assert len(session.steps) == 2
-    inner_step = next(s for s in session.steps if s.name == "inner")
-    outer_step = next(s for s in session.steps if s.name == "outer")
-    assert inner_step.parent_span_id == outer_step.span_id
+    assert len(session.actions) == 2
+    inner_action = next(s for s in session.actions if s.name == "inner")
+    outer_action = next(s for s in session.actions if s.name == "outer")
+    assert inner_action.parent_span_id == outer_action.span_id
 
 
 def test_step_error_captured():
@@ -82,8 +82,8 @@ def test_step_error_captured():
         with pytest.raises(ValueError, match="something went wrong"):
             failing()
 
-    assert len(session.steps) == 1
-    assert session.steps[0].error == "something went wrong"
+    assert len(session.actions) == 1
+    assert session.actions[0].error == "something went wrong"
 
 
 def test_step_no_session_passthrough():
@@ -112,8 +112,8 @@ def test_step_ordering():
         step_b()
         step_c()
 
-    assert [s.name for s in session.steps] == ["step_a", "step_b", "step_c"]
-    assert [s.step_index for s in session.steps] == [0, 1, 2]
+    assert [s.name for s in session.actions] == ["step_a", "step_b", "step_c"]
+    assert [s.action_index for s in session.actions] == [0, 1, 2]
 
 
 # ── optional name ─────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ def test_step_name_inferred_from_function():
     with trace_session(goal="test") as session:
         my_function()
 
-    assert session.steps[0].name == "my_function"
+    assert session.actions[0].name == "my_function"
 
 
 def test_action_bare_decorator_raises():
@@ -159,7 +159,7 @@ def test_step_explicit_name_overrides():
     with trace_session(goal="test") as session:
         inferred()
 
-    assert session.steps[0].name == "explicit"
+    assert session.actions[0].name == "explicit"
 
 
 # ── self/cls exclusion ────────────────────────────────────────────────
@@ -175,8 +175,8 @@ def test_self_excluded_from_input():
     with trace_session(goal="test") as session:
         agent.process("hello")
 
-    assert "self" not in session.steps[0].input_data
-    assert "hello" in session.steps[0].input_data
+    assert "self" not in session.actions[0].input_data
+    assert "hello" in session.actions[0].input_data
 
 
 def test_cls_excluded_from_input():
@@ -189,21 +189,21 @@ def test_cls_excluded_from_input():
     with trace_session(goal="test") as session:
         MyService.create("test")
 
-    assert "cls" not in session.steps[0].input_data
-    assert "test" in session.steps[0].input_data
+    assert "cls" not in session.actions[0].input_data
+    assert "test" in session.actions[0].input_data
 
 
-# ── trace_step context manager ────────────────────────────────────────
+# ── trace_action context manager ───────────────────────────────────────
 
 
 def test_trace_step_records():
     with trace_session(goal="test") as session:
-        with trace_step("manual_step", goal="do something") as ts:
+        with trace_action("manual_step", goal="do something") as ts:
             result = 2 + 2
             ts.set_output(result)
 
-    assert len(session.steps) == 1
-    s = session.steps[0]
+    assert len(session.actions) == 1
+    s = session.actions[0]
     assert s.name == "manual_step"
     assert s.goal == "do something"
     assert "4" in s.output_data
@@ -213,19 +213,19 @@ def test_trace_step_records():
 def test_trace_step_captures_error():
     with trace_session(goal="test") as session:
         with pytest.raises(RuntimeError):
-            with trace_step("failing_step", goal="should fail"):
+            with trace_action("failing_step", goal="should fail"):
                 raise RuntimeError("boom")
 
-    assert len(session.steps) == 1
-    assert session.steps[0].error == "boom"
+    assert len(session.actions) == 1
+    assert session.actions[0].error == "boom"
 
 
 def test_trace_step_with_input():
     with trace_session(goal="test") as session:
-        with trace_step("search", goal="find results", input_data={"query": "test"}) as ts:
+        with trace_action("search", goal="find results", input_data={"query": "test"}) as ts:
             ts.set_output(["result1"])
 
-    s = session.steps[0]
+    s = session.actions[0]
     assert "test" in s.input_data
     assert "result1" in s.output_data
 
@@ -233,17 +233,17 @@ def test_trace_step_with_input():
 def test_trace_step_nested_under_decorator():
     @action(goal="parent step")
     def parent() -> str:
-        with trace_step("child_block", goal="inner work") as ts:
+        with trace_action("child_block", goal="inner work") as ts:
             ts.set_output("inner result")
         return "done"
 
     with trace_session(goal="test") as session:
         parent()
 
-    assert len(session.steps) == 2
-    child = next(s for s in session.steps if s.name == "child_block")
-    parent_step = next(s for s in session.steps if s.name == "parent")
-    assert child.parent_span_id == parent_step.span_id
+    assert len(session.actions) == 2
+    child = next(s for s in session.actions if s.name == "child_block")
+    parent_action = next(s for s in session.actions if s.name == "parent")
+    assert child.parent_span_id == parent_action.span_id
 
 
 # ── instrument() ─────────────────────────────────────────────────────
@@ -259,9 +259,9 @@ def test_instrument_wraps_function():
         result = traced(7)
 
     assert result == 21
-    assert len(session.steps) == 1
-    assert session.steps[0].name == "original"
-    assert session.steps[0].goal == "triple the input"
+    assert len(session.actions) == 1
+    assert session.actions[0].name == "original"
+    assert session.actions[0].goal == "triple the input"
 
 
 def test_instrument_with_custom_name():
@@ -273,7 +273,7 @@ def test_instrument_with_custom_name():
     with trace_session(goal="test") as session:
         traced()
 
-    assert session.steps[0].name == "custom"
+    assert session.actions[0].name == "custom"
 
 
 def test_instrument_requires_goal():
@@ -301,7 +301,7 @@ def test_instrument_does_not_modify_original():
         traced()
 
     assert call_count == 2
-    assert len(session.steps) == 1
+    assert len(session.actions) == 1
 
 
 def test_instrument_bound_method():
@@ -316,8 +316,8 @@ def test_instrument_bound_method():
         result = agent.search("test")
 
     assert result == ["result for test"]
-    assert session.steps[0].name == "search"
-    assert "self" not in session.steps[0].input_data
+    assert session.actions[0].name == "search"
+    assert "self" not in session.actions[0].input_data
 
 
 # ── auto-transitions ─────────────────────────────────────────────────

@@ -32,10 +32,10 @@ def _score_bar(score: float | None) -> str:
     return f'<span style="color:{color};font-weight:600">{score:.1f}/5</span>'
 
 
-def _build_step_rows(steps) -> str:
-    """Build HTML table rows for steps."""
+def _build_action_rows(actions) -> str:
+    """Build HTML table rows for actions."""
     rows = []
-    for s in steps:
+    for s in actions:
         status = "ERROR" if s.error else "OK"
         status_color = "#ef4444" if s.error else "#22c55e"
         role = html.escape(s.role or "—")
@@ -54,7 +54,7 @@ def _build_step_rows(steps) -> str:
             )
         rows.append(f"""
             <tr>
-                <td>{s.step_index}</td>
+                <td>{s.action_index}</td>
                 <td>{name}{error_detail}</td>
                 <td>{role}</td>
                 <td><span style="color:{status_color}">{status}</span></td>
@@ -67,8 +67,8 @@ def _build_step_rows(steps) -> str:
 
 def _build_trace_detail(session) -> str:
     """Build the HTML detail view for a single trace."""
-    step_rows = _build_step_rows(session.steps)
-    total_ms = sum(s.latency_ms for s in session.steps)
+    action_rows = _build_action_rows(session.actions)
+    total_ms = sum(s.latency_ms for s in session.actions)
     session_score = _score_bar(session.session_score)
     explanation = ""
     if session.session_score_explanation:
@@ -84,11 +84,11 @@ def _build_trace_detail(session) -> str:
             if t.auto and not t.reason:
                 continue
             from_name = t.from_span_id or "start"
-            from_step = next(
-                (s for s in session.steps if s.span_id == t.from_span_id), None
+            from_action = next(
+                (s for s in session.actions if s.span_id == t.from_span_id), None
             )
-            if from_step:
-                from_name = from_step.name
+            if from_action:
+                from_name = from_action.name
             reason = html.escape(t.reason) if t.reason else "—"
             t_rows.append(
                 f"<tr><td>{html.escape(from_name)}</td>"
@@ -109,16 +109,16 @@ def _build_trace_detail(session) -> str:
         g_rows = []
         for g in session.groups:
             symbol = "&#10227;" if g.group_type == "loop" else "&#8741;"
-            group_steps = [s for s in session.steps if s.group_id == g.group_id]
+            group_actions = [s for s in session.actions if s.group_id == g.group_id]
             g_rows.append(
                 f"<tr><td>{symbol} {html.escape(g.name)}</td>"
                 f"<td>{g.group_type}</td>"
-                f"<td>{len(group_steps)}</td></tr>"
+                f"<td>{len(group_actions)}</td></tr>"
             )
         groups_html = f"""
         <h3>Groups</h3>
         <table>
-            <tr><th>Name</th><th>Type</th><th>Steps</th></tr>
+            <tr><th>Name</th><th>Type</th><th>Actions</th></tr>
             {"".join(g_rows)}
         </table>
         """
@@ -128,18 +128,18 @@ def _build_trace_detail(session) -> str:
         <h2>{html.escape(session.workflow_name or 'Unnamed Workflow')}</h2>
         <p><strong>Trace ID:</strong> <code>{session.trace_id}</code></p>
         <p><strong>Goal:</strong> {html.escape(session.goal)}</p>
-        <p><strong>Steps:</strong> {len(session.steps)} &middot;
+        <p><strong>Actions:</strong> {len(session.actions)} &middot;
            <strong>Total time:</strong> {total_ms:.0f}ms &middot;
            <strong>Session score:</strong> {session_score}</p>
         {explanation}
 
-        <h3>Steps</h3>
+        <h3>Actions</h3>
         <table>
             <tr>
                 <th>#</th><th>Name</th><th>Role</th>
                 <th>Status</th><th>Latency</th><th>Score</th>
             </tr>
-            {step_rows}
+            {action_rows}
         </table>
         {groups_html}
         {transitions_html}
@@ -150,7 +150,7 @@ def _build_trace_detail(session) -> str:
 def _build_trace_list_item(session) -> str:
     """Build a sidebar list item for a trace."""
     name = html.escape(session.workflow_name or "Unnamed")
-    steps = len(session.steps)
+    action_count = len(session.actions)
     score = _score_bar(session.session_score)
     created = getattr(session, "_created_at", "")
     if created:
@@ -159,7 +159,7 @@ def _build_trace_list_item(session) -> str:
     return f"""
     <a class="trace-item" href="/?trace_id={session.trace_id}">
         <div class="trace-name">{name}</div>
-        <div class="trace-meta">{steps} steps &middot; {score}</div>
+        <div class="trace-meta">{action_count} actions &middot; {score}</div>
         <div class="trace-date">{created}</div>
     </a>
     """

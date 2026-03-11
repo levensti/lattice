@@ -5,11 +5,11 @@ import json
 import logging
 import os
 import re
-from ..context import StepRecord, TraceSession
+from ..context import ActionRecord, TraceSession
 from .prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     SessionPromptBuilder,
-    StepPromptBuilder,
+    ActionPromptBuilder,
     build_judge_prompt,
     build_session_judge_prompt,
 )
@@ -49,42 +49,42 @@ def _parse_judge_response(text: str) -> tuple[float, str]:
     return 0.0, f"Could not parse judge response: {text[:200]}"
 
 
-def _build_prompt_for_step(
-    step: StepRecord,
-    step_prompt_builder: StepPromptBuilder | None = None,
+def _build_prompt_for_action(
+    action: ActionRecord,
+    action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> str:
-    builder = step_prompt_builder or build_judge_prompt
+    builder = action_prompt_builder or build_judge_prompt
     return builder(
-        name=step.name,
-        description=step.description,
-        goal=step.goal,
-        input_data=step.input_data,
-        output_data=step.output_data,
+        name=action.name,
+        description=action.description,
+        goal=action.goal,
+        input_data=action.input_data,
+        output_data=action.output_data,
     )
 
 
-def _score_single_step(
-    step: StepRecord,
+def _score_single_action(
+    action: ActionRecord,
     provider: JudgeProvider,
     system_prompt: str,
-    step_prompt_builder: StepPromptBuilder | None = None,
+    action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
-    logger.info("Scoring step: %s", step.name)
-    raw = provider.judge(system_prompt, _build_prompt_for_step(step, step_prompt_builder))
-    step.score, step.score_explanation = _parse_judge_response(raw)
-    logger.info("Scored step: %s → %.1f/5", step.name, step.score)
+    logger.info("Scoring action: %s", action.name)
+    raw = provider.judge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
+    action.score, action.score_explanation = _parse_judge_response(raw)
+    logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
 
-async def _async_score_single_step(
-    step: StepRecord,
+async def _async_score_single_action(
+    action: ActionRecord,
     provider: JudgeProvider,
     system_prompt: str,
-    step_prompt_builder: StepPromptBuilder | None = None,
+    action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
-    logger.info("Scoring step: %s", step.name)
-    raw = await provider.ajudge(system_prompt, _build_prompt_for_step(step, step_prompt_builder))
-    step.score, step.score_explanation = _parse_judge_response(raw)
-    logger.info("Scored step: %s → %.1f/5", step.name, step.score)
+    logger.info("Scoring action: %s", action.name)
+    raw = await provider.ajudge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
+    action.score, action.score_explanation = _parse_judge_response(raw)
+    logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
 
 def _get_provider(
@@ -113,9 +113,9 @@ def score_trace(
     model: str | None = None,
     api_key: str | None = None,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
-    step_prompt_builder: StepPromptBuilder | None = None,
-) -> list[StepRecord]:
-    """Score every step in the session synchronously. Updates steps in place.
+    action_prompt_builder: ActionPromptBuilder | None = None,
+) -> list[ActionRecord]:
+    """Score every action in the session synchronously. Updates actions in place.
 
     The judge LLM can be specified in three ways (highest priority first):
 
@@ -127,15 +127,15 @@ def score_trace(
     Prompt customization:
 
     - *system_prompt*: Override the system prompt sent to the judge LLM.
-    - *step_prompt_builder*: Callable that builds the user prompt for each step.
+    - *action_prompt_builder*: Callable that builds the user prompt for each action.
       Must accept keyword arguments ``name``, ``description``, ``goal``,
       ``input_data``, ``output_data`` and return a string.
     """
     prov = _get_provider(provider, model, api_key)
-    for step in session.steps:
-        if step.error is None:
-            _score_single_step(step, prov, system_prompt, step_prompt_builder)
-    return session.steps
+    for a in session.actions:
+        if a.error is None:
+            _score_single_action(a, prov, system_prompt, action_prompt_builder)
+    return session.actions
 
 
 async def async_score_trace(
@@ -146,22 +146,22 @@ async def async_score_trace(
     api_key: str | None = None,
     max_concurrency: int = 5,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
-    step_prompt_builder: StepPromptBuilder | None = None,
-) -> list[StepRecord]:
-    """Score every step concurrently. Updates steps in place.
+    action_prompt_builder: ActionPromptBuilder | None = None,
+) -> list[ActionRecord]:
+    """Score every action concurrently. Updates actions in place.
 
     See :func:`score_trace` for how the judge LLM and prompts are configured.
     """
     prov = _get_provider(provider, model, api_key)
     sem = asyncio.Semaphore(max_concurrency)
-    scorable = [s for s in session.steps if s.error is None]
+    scorable = [a for a in session.actions if a.error is None]
 
-    async def _bounded(step: StepRecord) -> None:
+    async def _bounded(action: ActionRecord) -> None:
         async with sem:
-            await _async_score_single_step(step, prov, system_prompt, step_prompt_builder)
+            await _async_score_single_action(action, prov, system_prompt, action_prompt_builder)
 
-    await asyncio.gather(*[_bounded(s) for s in scorable])
-    return session.steps
+    await asyncio.gather(*[_bounded(a) for a in scorable])
+    return session.actions
 
 
 def score_session(
@@ -175,7 +175,7 @@ def score_session(
 ) -> tuple[float, str]:
     """Judge the final output of the workflow against the session goal.
 
-    Looks at the last step's output and evaluates it against ``session.goal``.
+    Looks at the last action's output and evaluates it against ``session.goal``.
     Returns ``(score, explanation)`` and stores them on the session.
 
     See :func:`score_trace` for how the judge LLM is resolved.
@@ -188,20 +188,20 @@ def score_session(
       ``workflow_name`` and return a string.
 
     Raises:
-        ValueError: If the session has no goal or no steps.
+        ValueError: If the session has no goal or no actions.
     """
     if not session.goal:
         raise ValueError("Session has no goal set — nothing to judge against.")
-    if not session.steps:
-        raise ValueError("Session has no steps — nothing to judge.")
+    if not session.actions:
+        raise ValueError("Session has no actions — nothing to judge.")
 
     prov = _get_provider(provider, model, api_key)
-    last_step = session.steps[-1]
+    last_action = session.actions[-1]
 
     builder = session_prompt_builder or build_session_judge_prompt
     prompt = builder(
         goal=session.goal,
-        final_output=last_step.output_data,
+        final_output=last_action.output_data,
         workflow_name=session.workflow_name,
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)
@@ -228,16 +228,16 @@ async def async_score_session(
     """
     if not session.goal:
         raise ValueError("Session has no goal set — nothing to judge against.")
-    if not session.steps:
-        raise ValueError("Session has no steps — nothing to judge.")
+    if not session.actions:
+        raise ValueError("Session has no actions — nothing to judge.")
 
     prov = _get_provider(provider, model, api_key)
-    last_step = session.steps[-1]
+    last_action = session.actions[-1]
 
     builder = session_prompt_builder or build_session_judge_prompt
     prompt = builder(
         goal=session.goal,
-        final_output=last_step.output_data,
+        final_output=last_action.output_data,
         workflow_name=session.workflow_name,
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)

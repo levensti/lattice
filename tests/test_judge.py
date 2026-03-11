@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from lattice.context import StepRecord, TraceSession
+from lattice.context import ActionRecord, TraceSession
 from lattice.judge.prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     build_judge_prompt,
@@ -9,15 +9,15 @@ from lattice.judge.prompt_builder import (
 from lattice.judge.scorer import _parse_judge_response, score_session, score_trace
 
 
-def _make_step(**overrides):
+def _make_action(**overrides):
     defaults = dict(
         span_id="s1", name="researcher", description="Searches for info",
         goal="Must cite sources", input_data="What is Python?",
         output_data="Python is a programming language.",
-        step_index=0, latency_ms=10.0,
+        action_index=0, latency_ms=10.0,
     )
     defaults.update(overrides)
-    return StepRecord(**defaults)
+    return ActionRecord(**defaults)
 
 
 def _fake_provider(response: str = '{"score": 4, "explanation": "Good"}'):
@@ -90,7 +90,7 @@ def test_parse_failure():
 
 def test_score_trace_custom_system_prompt():
     session = TraceSession(goal="test")
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     prov = _fake_provider()
     score_trace(session, provider=prov, system_prompt="Be a strict auditor.")
@@ -102,7 +102,7 @@ def test_score_trace_custom_system_prompt():
 
 def test_score_trace_default_system_prompt():
     session = TraceSession(goal="test")
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     prov = _fake_provider()
     score_trace(session, provider=prov)
@@ -114,15 +114,15 @@ def test_score_trace_default_system_prompt():
 # ── Custom step prompt builder ────────────────────────────────────────
 
 
-def test_score_trace_custom_step_prompt_builder():
+def test_score_trace_custom_action_prompt_builder():
     session = TraceSession(goal="test")
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     def custom_builder(*, name, description, goal, input_data, output_data):
         return f"CUSTOM: {name} | {goal}"
 
     prov = _fake_provider()
-    score_trace(session, provider=prov, step_prompt_builder=custom_builder)
+    score_trace(session, provider=prov, action_prompt_builder=custom_builder)
 
     user_arg = prov.judge.call_args[0][1]
     assert user_arg == "CUSTOM: researcher | Must cite sources"
@@ -134,7 +134,7 @@ def test_score_trace_custom_step_prompt_builder():
 def test_score_session_custom_session_prompt_builder():
     session = TraceSession(goal="Summarize the article")
     session.workflow_name = "summarizer"
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     def custom_builder(*, goal, final_output, workflow_name):
         return f"CUSTOM SESSION: {workflow_name} | {goal}"
@@ -148,7 +148,7 @@ def test_score_session_custom_session_prompt_builder():
 
 def test_score_session_custom_system_prompt():
     session = TraceSession(goal="test goal")
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     prov = _fake_provider()
     score_session(session, provider=prov, system_prompt="Judge harshly.")
@@ -159,7 +159,7 @@ def test_score_session_custom_system_prompt():
 
 def test_score_session_defaults():
     session = TraceSession(goal="test goal")
-    session.add_step(_make_step())
+    session.add_action(_make_action())
 
     prov = _fake_provider()
     score_session(session, provider=prov)
@@ -180,8 +180,8 @@ def test_score_session_defaults():
 
 def test_score_trace_skips_errored_steps():
     session = TraceSession(goal="test")
-    session.add_step(_make_step(name="ok"))
-    session.add_step(_make_step(name="failed", error="boom"))
+    session.add_action(_make_action(name="ok"))
+    session.add_action(_make_action(name="failed", error="boom"))
 
     prov = _fake_provider()
     score_trace(session, provider=prov)

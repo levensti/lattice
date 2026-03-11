@@ -22,8 +22,8 @@ logger = logging.getLogger("lattice")
 class BottleneckResult:
     """A single bottleneck finding from the analysis."""
 
-    step_name: str
-    step_index: int
+    action_name: str
+    action_index: int
     score: float
     explanation: str
     impact: ImpactType
@@ -31,13 +31,13 @@ class BottleneckResult:
 
 
 def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
-    """Rank steps by quality issues, worst first.
+    """Rank actions by quality issues, worst first.
 
     Performs three layers of analysis:
 
-    1. **Individual steps** — errors surface first, then scored steps ordered
+    1. **Individual actions** — errors surface first, then scored actions ordered
        by ascending score with ties broken by latency.
-    2. **Loop convergence** — flags repeated steps whose scores failed to
+    2. **Loop convergence** — flags repeated actions whose scores failed to
        improve across iterations (impact ``"loop_no_convergence"``).
     3. **Parallel branch imbalance** — flags the weakest branch when it
        scores significantly below the group average
@@ -45,29 +45,29 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
     """
     results: list[BottleneckResult] = []
 
-    for step in session.steps:
-        if step.error is not None:
+    for a in session.actions:
+        if a.error is not None:
             results.append(BottleneckResult(
-                step_name=step.name,
-                step_index=step.step_index,
+                action_name=a.name,
+                action_index=a.action_index,
                 score=0.0,
-                explanation=f"Step raised an error: {step.error}",
+                explanation=f"Action raised an error: {a.error}",
                 impact="error",
-                latency_ms=step.latency_ms,
+                latency_ms=a.latency_ms,
             ))
             continue
 
-        if step.score is None:
+        if a.score is None:
             continue
 
-        impact = _classify_impact(step.score, step.step_index, session)
+        impact = _classify_impact(a.score, a.action_index, session)
         results.append(BottleneckResult(
-            step_name=step.name,
-            step_index=step.step_index,
-            score=step.score,
-            explanation=step.score_explanation or "",
+            action_name=a.name,
+            action_index=a.action_index,
+            score=a.score,
+            explanation=a.score_explanation or "",
             impact=impact,
-            latency_ms=step.latency_ms,
+            latency_ms=a.latency_ms,
         ))
 
     _analyze_loops(session, results)
@@ -77,17 +77,17 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
     for r in results:
         logger.info(
             "Bottleneck: %s (score=%.1f, impact=%s, %.1fms)",
-            r.step_name, r.score, r.impact, r.latency_ms,
+            r.action_name, r.score, r.impact, r.latency_ms,
         )
     return results
 
 
 def _classify_impact(
-    score: float, step_index: int, session: TraceSession
+    score: float, action_index: int, session: TraceSession
 ) -> ImpactType:
     scored = sorted(
-        [s for s in session.steps if s.score is not None],
-        key=lambda s: s.step_index,
+        [s for s in session.actions if s.score is not None],
+        key=lambda s: s.action_index,
     )
     if not scored:
         return "lowest_score"
@@ -96,7 +96,7 @@ def _classify_impact(
     if score <= min_score:
         return "lowest_score"
 
-    prev_steps = [s for s in scored if s.step_index < step_index]
+    prev_steps = [s for s in scored if s.action_index < action_index]
     if prev_steps:
         prev_score = prev_steps[-1].score
         drop = prev_score - score
@@ -115,13 +115,13 @@ def _analyze_loops(
 ) -> None:
     """Detect loop convergence issues.
 
-    For each step name that repeats across iterations within a loop group,
+    For each action name that repeats across iterations within a loop group,
     check whether scores improved from first to last iteration.
     """
     loop_groups = [g for g in session.groups if g.group_type == "loop"]
     for group in loop_groups:
         loop_steps = [
-            s for s in session.steps
+            s for s in session.actions
             if s.group_id == group.group_id
             and s.score is not None
             and s.error is None
@@ -140,8 +140,8 @@ def _analyze_loops(
             scores = [s.score for s in named_steps]
             if scores[-1] <= scores[0]:
                 results.append(BottleneckResult(
-                    step_name=f"{name} (loop '{group.name}')",
-                    step_index=named_steps[-1].step_index,
+                    action_name=f"{name} (loop '{group.name}')",
+                    action_index=named_steps[-1].action_index,
                     score=scores[-1],
                     explanation=(
                         f"No improvement across {len(scores)} iterations: "
@@ -163,7 +163,7 @@ def _analyze_parallel(
     parallel_groups = [g for g in session.groups if g.group_type == "parallel"]
     for group in parallel_groups:
         scored_steps = [
-            s for s in session.steps
+            s for s in session.actions
             if s.group_id == group.group_id
             and s.score is not None
             and s.error is None
@@ -175,8 +175,8 @@ def _analyze_parallel(
         worst = min(scored_steps, key=lambda s: s.score)
         if worst.score < avg_score - 1.0:
             results.append(BottleneckResult(
-                step_name=f"{worst.name} (parallel '{group.name}')",
-                step_index=worst.step_index,
+                action_name=f"{worst.name} (parallel '{group.name}')",
+                action_index=worst.action_index,
                 score=worst.score,
                 explanation=(
                     f"Weakest branch: {worst.score:.1f}/5 vs "

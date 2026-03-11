@@ -1,6 +1,6 @@
 # Lattice
 
-Lattice is a lightweight quality debugging framework for multi-agent systems. Trace each step in your workflow, score it against a defined goal using an LLM judge, and find exactly where quality degrades.
+Lattice is a lightweight quality debugging framework for multi-agent systems. Trace each action in your workflow, score it against a defined goal using an LLM judge, and find exactly where quality degrades.
 
 Designed to plug into existing codebases with minimal changes — add a few lines of code and get full visibility into your pipeline in minutes. Perfect for modern agent architectures, including sequential pipelines, ReAct loops, parallel fan-outs, evaluator-optimizer patterns, state machines, and orchestrator-subagent hierarchies.
 
@@ -29,7 +29,7 @@ with trace_session(goal="Produce a well-researched article") as session:
 
 score_trace(session, model="gpt-4o")
 for b in find_bottlenecks(session):
-    print(f"{b.step_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
+    print(f"{b.action_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
 
 Every `@action` and `trace_session` requires a `goal` — this is what the judge evaluates against. Traces are automatically saved to a local SQLite database so you can query and visualize them later.
@@ -48,10 +48,10 @@ def think(state): ...
 
 Works on sync and async functions. Works on methods (`self` and `cls` are excluded from traced inputs).
 
-### `trace_step` / `instrument()` — for code you don't own
+### `trace_action` / `instrument()` — for code you don't own
 
 ```python
-with trace_step("api_call", goal="Return relevant results") as ts:
+with trace_action("api_call", goal="Return relevant results") as ts:
     result = third_party_api.search(query)
     ts.set_output(result)
 
@@ -96,7 +96,7 @@ with trace_session(goal="Find and summarize relevant results") as session:
 | Evaluator-optimizer        | `trace_iterations` with `role="generator"` / `"evaluator"` | `eval_optimizer_example.py` |
 | Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                           |
 | Thread-based parallelism   | `copy_trace_context()`                                     | —                           |
-| Retrofitting existing code | `instrument()` + `trace_step`                              | `retrofit_example.py`       |
+| Retrofitting existing code | `instrument()` + `trace_action`                             | `retrofit_example.py`       |
 
 ## Scoring
 
@@ -121,14 +121,14 @@ You can also pass `api_key=` explicitly or a custom `provider=` instance. Use `a
 
 ```python
 for b in find_bottlenecks(session):
-    print(f"{b.step_name}: score={b.score}, impact={b.impact}")
+    print(f"{b.action_name}: score={b.score}, impact={b.impact}")
 ```
 
 | Impact                  | Meaning                                                  |
 | ----------------------- | -------------------------------------------------------- |
-| `"error"`               | Step raised an exception                                 |
-| `"lowest_score"`        | Worst-scoring step in the session                        |
-| `"largest_drop"`        | Biggest quality drop from the preceding step             |
+| `"error"`               | Action raised an exception                               |
+| `"lowest_score"`        | Worst-scoring action in the session                      |
+| `"largest_drop"`        | Biggest quality drop from the preceding action           |
 | `"below_average"`       | Below the session average                                |
 | `"loop_no_convergence"` | Scores didn't improve across loop iterations             |
 | `"weakest_branch"`      | Worst parallel branch, significantly below group average |
