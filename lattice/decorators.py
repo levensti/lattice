@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Sequence
 
 from .context import (
-    StepRecord,
+    ActionRecord,
     TransitionRecord,
     _current_activation_reason,
     _current_group_id,
@@ -54,20 +54,20 @@ def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
         return _safe_serialize({"args": args, "kwargs": kwargs})
 
 
-def _record_step(
+def _record_action(
     session, *, span_id, name, description, goal,
-    input_data, output_data, step_index, latency_ms, parent_span_id,
+    input_data, output_data, action_index, latency_ms, parent_span_id,
     tags, role=None, group_id=None, iteration=None,
     activation_reason=None, error=None,
 ):
-    session.add_step(StepRecord(
+    session.add_action(ActionRecord(
         span_id=span_id,
         name=name,
         description=description,
         goal=goal,
         input_data=input_data,
         output_data=output_data,
-        step_index=step_index,
+        action_index=action_index,
         latency_ms=latency_ms,
         parent_span_id=parent_span_id,
         error=error,
@@ -95,60 +95,60 @@ def _read_topology_context() -> dict:
     }
 
 
-def _begin_step(func, args, kwargs, *, step_id, name, tags, role):
-    """Common setup for both sync and async step wrappers.
+def _begin_action(func, args, kwargs, *, action_id, name, tags, role):
+    """Common setup for both sync and async action wrappers.
 
-    Returns a dict of context needed by ``_complete_step`` / ``_fail_step``.
+    Returns a dict of context needed by ``_complete_action`` / ``_fail_action``.
     """
     session = _current_session.get()
     input_str = _capture_inputs(func, args, kwargs)
-    span_id = step_id or uuid.uuid4().hex
+    span_id = action_id or uuid.uuid4().hex
     parent_id = _current_span_id.get()
-    step_index = session.next_index() if session else 0
+    action_index = session.next_index() if session else 0
     topo = _read_topology_context()
     parent_token = _current_span_id.set(span_id)
 
-    logger.info("Step started: %s", name)
-    logger.debug("Step %s input: %s", name, input_str[:500])
+    logger.info("Action started: %s", name)
+    logger.debug("Action %s input: %s", name, input_str[:500])
 
     return {
         "session": session, "input_str": input_str,
         "span_id": span_id, "parent_id": parent_id,
-        "step_index": step_index, "topo": topo,
+        "action_index": action_index, "topo": topo,
         "parent_token": parent_token,
         "start": time.perf_counter(),
     }
 
 
-def _complete_step(ctx, *, name, description, goal, tags, role, result):
-    """Record a successful step and return the serialized output."""
+def _complete_action(ctx, *, name, description, goal, tags, role, result):
+    """Record a successful action and return the serialized output."""
     output_str = _safe_serialize(result)
     latency = (time.perf_counter() - ctx["start"]) * 1000
     if ctx["session"]:
-        _record_step(
+        _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
             description=description, goal=goal,
             input_data=ctx["input_str"], output_data=output_str,
-            step_index=ctx["step_index"], latency_ms=latency,
+            action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
             **ctx["topo"],
         )
-    logger.info("Step completed: %s (%.1fms)", name, latency)
-    logger.debug("Step %s output: %s", name, output_str[:500])
+    logger.info("Action completed: %s (%.1fms)", name, latency)
+    logger.debug("Action %s output: %s", name, output_str[:500])
 
 
-def _fail_step(ctx, *, name, description, goal, tags, role, exc):
-    """Record a failed step."""
+def _fail_action(ctx, *, name, description, goal, tags, role, exc):
+    """Record a failed action."""
     latency = (time.perf_counter() - ctx["start"]) * 1000
-    logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
+    logger.error("Action failed: %s (%.1fms) — %s", name, latency, exc)
     if ctx["session"]:
-        _record_step(
+        _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
             description=description, goal=goal,
             input_data=ctx["input_str"], output_data="",
-            step_index=ctx["step_index"], latency_ms=latency,
+            action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
             error=str(exc), **ctx["topo"],
         )
@@ -158,33 +158,33 @@ def _trace_decorator(
     name: str,
     description: str,
     goal: str,
-    step_id: str | None,
+    action_id: str | None,
     tags: Sequence[str],
     role: str | None,
 ):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
+            ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
             try:
                 result = func(*args, **kwargs)
-                _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
                 return result
             except Exception as exc:
-                _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
+                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            ctx = _begin_step(func, args, kwargs, step_id=step_id, name=name, tags=tags, role=role)
+            ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
             try:
                 result = await func(*args, **kwargs)
-                _complete_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
                 return result
             except Exception as exc:
-                _fail_step(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
+                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
@@ -202,7 +202,7 @@ def action(
     name: str | None = None,
     description: str = "",
     goal: str = "",
-    step_id: str | None = None,
+    action_id: str | None = None,
     tags: Sequence[str] = (),
     role: str | None = None,
 ) -> Callable:
@@ -221,7 +221,7 @@ def action(
         description: What this action does.
         goal: **Required.** What success looks like — the judge evaluates
             against this.
-        step_id: Custom span ID (auto-generated if omitted).
+        action_id: Custom span ID (auto-generated if omitted).
         tags: Labels for grouping/filtering (e.g. ``["llm", "io"]``).
         role: Semantic role (e.g. ``"generator"``, ``"evaluator"``,
               ``"think"``). Used by topology-aware analysis.
@@ -242,15 +242,15 @@ def action(
                 f"@action requires a goal — use @action(goal=\"...\") "
                 f"instead of bare @action on '{actual_name}'."
             )
-        return _trace_decorator(actual_name, description, goal, step_id, tags, role)(func)
+        return _trace_decorator(actual_name, description, goal, action_id, tags, role)(func)
 
     if _func is not None:
         return decorator(_func)
     return decorator
 
 
-class _TraceStepHandle:
-    """Handle yielded by :func:`trace_step` for setting output."""
+class _TraceActionHandle:
+    """Handle yielded by :func:`trace_action` for setting output."""
 
     __slots__ = ("_output",)
 
@@ -263,7 +263,7 @@ class _TraceStepHandle:
 
 
 @contextmanager
-def trace_step(
+def trace_action(
     name: str,
     *,
     goal: str = "",
@@ -278,60 +278,60 @@ def trace_step(
     when calling third-party functions or wrapping a block of code that
     isn't a single function call::
 
-        with trace_step("external_search", goal="Return results") as ts:
+        with trace_action("external_search", goal="Return results") as ts:
             result = third_party_api.search(query)
             ts.set_output(result)
 
     Args:
-        name: Step name.
+        name: Action name.
         goal: **Required.** Quality goal for the judge.
         description: What this block does.
         role: Semantic role in the architecture.
         tags: Labels for grouping/filtering.
-        input_data: Optional input to record on the step.
+        input_data: Optional input to record on the action.
     """
     if not goal:
         raise TypeError(
-            f"trace_step requires a goal — use "
-            f"trace_step(\"{name}\", goal=\"...\")."
+            f"trace_action requires a goal — use "
+            f"trace_action(\"{name}\", goal=\"...\")."
         )
     session = _current_session.get()
     span_id = uuid.uuid4().hex
     parent_id = _current_span_id.get()
-    step_index = session.next_index() if session else 0
+    action_index = session.next_index() if session else 0
     topo = _read_topology_context()
     parent_token = _current_span_id.set(span_id)
     start = time.perf_counter()
 
     input_str = _safe_serialize(input_data) if input_data is not None else ""
-    handle = _TraceStepHandle()
+    handle = _TraceActionHandle()
 
-    logger.info("Step started: %s", name)
+    logger.info("Action started: %s", name)
     try:
         yield handle
         output_str = _safe_serialize(handle._output) if handle._output is not None else ""
         latency = (time.perf_counter() - start) * 1000
         if session:
-            _record_step(
+            _record_action(
                 session,
                 span_id=span_id, name=name,
                 description=description, goal=goal,
                 input_data=input_str, output_data=output_str,
-                step_index=step_index, latency_ms=latency,
+                action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
                 **topo,
             )
-        logger.info("Step completed: %s (%.1fms)", name, latency)
+        logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
-        logger.error("Step failed: %s (%.1fms) — %s", name, latency, exc)
+        logger.error("Action failed: %s (%.1fms) — %s", name, latency, exc)
         if session:
-            _record_step(
+            _record_action(
                 session,
                 span_id=span_id, name=name,
                 description=description, goal=goal,
                 input_data=input_str, output_data="",
-                step_index=step_index, latency_ms=latency,
+                action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
                 error=str(exc), **topo,
             )
@@ -365,7 +365,7 @@ def instrument(
 
     Args:
         func: The function to instrument.
-        name: Step name (defaults to ``func.__name__``).
+        name: Action name (defaults to ``func.__name__``).
         goal: **Required.** Quality goal for the judge.
         description: What this function does.
         tags: Labels for grouping/filtering.

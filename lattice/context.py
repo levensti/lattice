@@ -14,8 +14,8 @@ logger = logging.getLogger("lattice")
 
 
 @dataclass
-class StepRecord:
-    """A single traced step within a session."""
+class ActionRecord:
+    """A single traced action within a session."""
 
     span_id: str
     name: str
@@ -23,7 +23,7 @@ class StepRecord:
     goal: str
     input_data: str
     output_data: str
-    step_index: int
+    action_index: int
     latency_ms: float
     parent_span_id: str | None = None
     score: float | None = None
@@ -38,7 +38,7 @@ class StepRecord:
 
 @dataclass
 class GroupRecord:
-    """Metadata about a structural group of steps (loop or parallel)."""
+    """Metadata about a structural group of actions (loop or parallel)."""
 
     group_id: str
     group_type: GroupType
@@ -48,7 +48,7 @@ class GroupRecord:
 
 @dataclass
 class TransitionRecord:
-    """A recorded routing decision between steps."""
+    """A recorded routing decision between actions."""
 
     from_span_id: str | None
     to_name: str
@@ -58,25 +58,25 @@ class TransitionRecord:
 
 @dataclass
 class TraceSession:
-    """Groups multiple traced steps into a single debugging session."""
+    """Groups multiple traced actions into a single debugging session."""
 
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     workflow_name: str = ""
     goal: str = ""
-    steps: list[StepRecord] = field(default_factory=list)
+    actions: list[ActionRecord] = field(default_factory=list)
     groups: list[GroupRecord] = field(default_factory=list)
     transitions: list[TransitionRecord] = field(default_factory=list)
     session_score: float | None = field(default=None)
     session_score_explanation: str | None = field(default=None)
-    _step_counter: int = field(default=0, repr=False)
+    _action_counter: int = field(default=0, repr=False)
 
     def next_index(self) -> int:
-        idx = self._step_counter
-        self._step_counter += 1
+        idx = self._action_counter
+        self._action_counter += 1
         return idx
 
-    def add_step(self, step: StepRecord) -> None:
-        self.steps.append(step)
+    def add_action(self, action: ActionRecord) -> None:
+        self.actions.append(action)
 
     def add_group(self, group: GroupRecord) -> None:
         self.groups.append(group)
@@ -87,7 +87,7 @@ class TraceSession:
     def to_dict(self) -> dict[str, Any]:
         """Serialize the session to a plain dict (suitable for JSON)."""
         d = asdict(self)
-        d.pop("_step_counter", None)
+        d.pop("_action_counter", None)
         return d
 
 
@@ -139,7 +139,7 @@ class LoopContext:
 class trace_iterations:
     """Wrap an iterable with loop tracing, avoiding nested context managers.
 
-    Equivalent to ``trace_loop`` + ``loop.iteration()`` but in a single
+    Equivalent to ``trace_loop`` + ``loop.iteration()`` in a single
     ``for`` statement::
 
         for i in trace_iterations("react", range(5)):
@@ -190,7 +190,7 @@ class trace_iterations:
 
 @contextmanager
 def trace_loop(name: str):
-    """Group steps into a named loop with numbered iterations.
+    """Group actions into a named loop with numbered iterations.
 
     Usage::
 
@@ -223,7 +223,7 @@ def trace_loop(name: str):
 
 @contextmanager
 def trace_parallel(name: str):
-    """Mark steps as running concurrently within this context.
+    """Mark actions as running concurrently within this context.
 
     Works with ``asyncio.gather`` (context is automatically copied to tasks)
     and with threads when combined with :func:`copy_trace_context`.
@@ -255,10 +255,10 @@ def trace_parallel(name: str):
 
 
 def trace_transition(*, to: str, reason: str = "") -> None:
-    """Record a routing decision from the current step.
+    """Record a routing decision from the current action.
 
     Call inside a ``@action``-decorated function to capture why control
-    is being transferred to a particular next step.
+    is being transferred to a particular next action.
 
     Usage::
 
@@ -282,7 +282,7 @@ def trace_transition(*, to: str, reason: str = "") -> None:
 
 @contextmanager
 def trace_activation(*, reason: str):
-    """Provide an activation reason for steps without a parent caller.
+    """Provide an activation reason for actions without a parent caller.
 
     Used in blackboard / event-driven architectures where agents
     self-activate based on shared state changes.
@@ -307,7 +307,7 @@ def trace_session(
     goal: str,
     persist: bool = True,
 ):
-    """Context manager that groups decorated calls into a single trace.
+    """Context manager that groups ``@action``-decorated calls into a single trace.
 
     Args:
         trace_id: Custom trace ID (auto-generated if omitted).
@@ -343,7 +343,7 @@ def trace_session(
         logger.info(
             "Trace session ended (trace_id=%s, steps=%d)",
             session.trace_id,
-            len(session.steps),
+            len(session.actions),
         )
 
 
@@ -355,7 +355,7 @@ def copy_trace_context() -> contextvars.Context:
     """Copy the current trace context for use in a new thread.
 
     ``ContextVar`` values are not automatically propagated to threads.
-    Use this to capture the context and run traced steps within it::
+    Use this to capture the context and run traced actions within it::
 
         from concurrent.futures import ThreadPoolExecutor
 

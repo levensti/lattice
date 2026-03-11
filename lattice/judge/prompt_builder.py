@@ -4,8 +4,8 @@ from typing import Protocol
 
 
 JUDGE_SYSTEM_PROMPT = (
-    "You are a quality judge for a step in a multi-agent system. "
-    "Your job is to assess whether the output of this step meets its goal. "
+    "You are a quality judge for an action in a multi-agent system. "
+    "Your job is to assess whether the output of this action meets its goal. "
     "Be objective, concise, and fair."
 )
 
@@ -25,8 +25,8 @@ RESPONSE_FORMAT = (
 )
 
 
-class StepPromptBuilder(Protocol):
-    """Callable that builds the user prompt for judging a single step."""
+class ActionPromptBuilder(Protocol):
+    """Callable that builds the user prompt for judging a single action."""
 
     def __call__(
         self,
@@ -59,16 +59,16 @@ def build_judge_prompt(
     input_data: str,
     output_data: str,
 ) -> str:
-    """Build the user prompt sent to the judge LLM for a single step."""
+    """Build the user prompt sent to the judge LLM for a single action."""
     goal_block = goal or "Assess overall quality, relevance, and correctness."
 
     return (
-        f"Evaluate the following step output.\n\n"
-        f"**Step name:** {name}\n"
+        f"Evaluate the following action output.\n\n"
+        f"**Action name:** {name}\n"
         f"**Description:** {description or 'No description provided.'}\n\n"
-        f"**Step goal:**\n{goal_block}\n\n"
-        f"**Input to the step:**\n{input_data[:MAX_FIELD_CHARS]}\n\n"
-        f"**Output from the step:**\n{output_data[:MAX_FIELD_CHARS]}\n\n"
+        f"**Action goal:**\n{goal_block}\n\n"
+        f"**Input to the action:**\n{input_data[:MAX_FIELD_CHARS]}\n\n"
+        f"**Output from the action:**\n{output_data[:MAX_FIELD_CHARS]}\n\n"
         f"Rate the quality of this output on a scale of 1 to 5:\n"
         f"{RATING_SCALE}\n"
         f"{RESPONSE_FORMAT}"

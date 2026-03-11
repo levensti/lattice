@@ -77,13 +77,13 @@ def test_query_empty_db():
     assert results == []
 
 
-def test_session_with_steps_roundtrips():
-    from lattice.context import StepRecord
+def test_session_with_actions_roundtrips():
+    from lattice.context import ActionRecord
 
     session = TraceSession(trace_id="rt1", workflow_name="roundtrip", goal="test")
-    session.add_step(StepRecord(
+    session.add_action(ActionRecord(
         span_id="s1", name="step1", description="desc", goal="goal",
-        input_data="in", output_data="out", step_index=0, latency_ms=42.5,
+        input_data="in", output_data="out", action_index=0, latency_ms=42.5,
         score=4.0, score_explanation="good",
     ))
     save_session(session)
@@ -91,11 +91,11 @@ def test_session_with_steps_roundtrips():
     results = store_traces(trace_id="rt1")
     assert len(results) == 1
     loaded = results[0]
-    assert len(loaded.steps) == 1
-    assert loaded.steps[0].name == "step1"
-    assert loaded.steps[0].latency_ms == 42.5
-    assert loaded.steps[0].score == 4.0
-    assert loaded.steps[0].score_explanation == "good"
+    assert len(loaded.actions) == 1
+    assert loaded.actions[0].name == "step1"
+    assert loaded.actions[0].latency_ms == 42.5
+    assert loaded.actions[0].score == 4.0
+    assert loaded.actions[0].score_explanation == "good"
 
 
 def test_session_score_roundtrips():
@@ -125,7 +125,7 @@ def test_trace_session_auto_persists():
     results = store_traces(trace_id=session.trace_id)
     assert len(results) == 1
     assert results[0].workflow_name == "auto"
-    assert len(results[0].steps) == 1
+    assert len(results[0].actions) == 1
 
 
 def test_trace_session_persist_false():

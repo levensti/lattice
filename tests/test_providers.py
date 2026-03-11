@@ -1,6 +1,6 @@
 """Tests for provider routing and session serialization."""
 
-from lattice.context import GroupRecord, StepRecord, TraceSession
+from lattice.context import ActionRecord, GroupRecord, TraceSession
 from lattice.judge.providers import _route_model
 
 
@@ -43,20 +43,20 @@ def test_to_dict_excludes_private_counter():
     session.next_index()
     session.next_index()
     d = session.to_dict()
-    assert "_step_counter" not in d
+    assert "_action_counter" not in d
     assert d["goal"] == "test goal"
     assert d["trace_id"]  # should have a trace ID
 
 
-def test_to_dict_includes_steps():
+def test_to_dict_includes_actions():
     session = TraceSession(goal="g")
-    session.add_step(StepRecord(
+    session.add_action(ActionRecord(
         span_id="s1", name="step1", description="", goal="g",
-        input_data="in", output_data="out", step_index=0, latency_ms=10.0,
+        input_data="in", output_data="out", action_index=0, latency_ms=10.0,
     ))
     d = session.to_dict()
-    assert len(d["steps"]) == 1
-    assert d["steps"][0]["name"] == "step1"
+    assert len(d["actions"]) == 1
+    assert d["actions"][0]["name"] == "step1"
 
 
 def test_to_dict_includes_groups():

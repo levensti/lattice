@@ -51,18 +51,18 @@ def main():
         final = editor(draft)
 
     print(f"Final output: {final}\n")
-    print(f"Traced {len(session.steps)} steps\n")
+    print(f"Traced {len(session.actions)} actions\n")
 
     try:
         score_trace(session, model="gpt-4o")
 
-        print("=== Step Scores ===")
-        for s in session.steps:
-            print(f"  [{s.step_index}] {s.name}: {s.score}/5 — {s.score_explanation}")
+        print("=== Action Scores ===")
+        for s in session.actions:
+            print(f"  [{s.action_index}] {s.name}: {s.score}/5 — {s.score_explanation}")
 
         print("\n=== Bottleneck Analysis ===")
         for b in find_bottlenecks(session):
-            print(f"  {b.step_name} (score={b.score}, impact={b.impact}): {b.explanation}")
+            print(f"  {b.action_name} (score={b.score}, impact={b.impact}): {b.explanation}")
     except ValueError as e:
         print(f"Skipping scoring (no API key): {e}")
 

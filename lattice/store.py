@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from .context import (
+    ActionRecord,
     GroupRecord,
-    StepRecord,
     TraceSession,
     TransitionRecord,
 )
@@ -109,7 +109,7 @@ def _row_to_session(row: tuple) -> TraceSession:
     trace_id, workflow_name, goal, score, explanation, data_json, created_at = row
     data = json.loads(data_json)
 
-    steps = [StepRecord(**s) for s in data.get("steps", [])]
+    actions = [ActionRecord(**a) for a in data.get("actions", [])]
     groups = [GroupRecord(**g) for g in data.get("groups", [])]
     transitions = [TransitionRecord(**t) for t in data.get("transitions", [])]
 
@@ -117,7 +117,7 @@ def _row_to_session(row: tuple) -> TraceSession:
         trace_id=trace_id,
         workflow_name=workflow_name,
         goal=goal,
-        steps=steps,
+        actions=actions,
         groups=groups,
         transitions=transitions,
         session_score=score,
