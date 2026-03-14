@@ -203,10 +203,12 @@ async def test_background_scorer_scores_submitted_session():
 
     prov = _fake_provider()
 
-    async with BackgroundScorer(provider=prov) as scorer:
-        scorer.submit(session)
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
 
-    # drain() was called on __aexit__, so scoring is complete
     assert prov.ajudge.call_count == 1
     assert session.actions[0].score == 4.0
 
@@ -236,7 +238,7 @@ async def test_background_scorer_submit_is_nonblocking():
     await scorer.drain()
     assert judged == [True]
 
-    await scorer.close()
+    await scorer.cancel()
 
 
 @pytest.mark.asyncio
@@ -247,9 +249,12 @@ async def test_background_scorer_multiple_sessions():
 
     prov = _fake_provider()
 
-    async with BackgroundScorer(provider=prov) as scorer:
-        for s in sessions:
-            scorer.submit(s)
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    for s in sessions:
+        scorer.submit(s)
+    await scorer.drain()
+    await scorer.cancel()
 
     assert prov.ajudge.call_count == 3
     for s in sessions:
@@ -264,8 +269,11 @@ async def test_background_scorer_skips_errored_steps():
 
     prov = _fake_provider()
 
-    async with BackgroundScorer(provider=prov) as scorer:
-        scorer.submit(session)
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
 
     assert prov.ajudge.call_count == 1
 
@@ -275,6 +283,48 @@ async def test_background_scorer_submit_before_start_raises():
     scorer = BackgroundScorer(provider=_fake_provider())
     with pytest.raises(RuntimeError, match="not started"):
         scorer.submit(TraceSession(goal="test"))
+
+
+@pytest.mark.asyncio
+async def test_background_scorer_cancel_stops_immediately():
+    """cancel() kills the worker without waiting for pending sessions."""
+    session = TraceSession(goal="test")
+    session.add_action(_make_action())
+
+    async def never_returns(system, prompt):
+        await asyncio.sleep(999)
+        return '{"score": 5, "explanation": "done"}'
+
+    prov = MagicMock()
+    prov.ajudge = never_returns
+
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(session)
+
+    # cancel() should return quickly even though the judge is "stuck"
+    await scorer.cancel()
+    assert scorer._worker_task is None
+    # Session was NOT scored — that's fine, it's in SQLite for later
+    assert session.actions[0].score is None
+
+
+@pytest.mark.asyncio
+async def test_background_scorer_context_manager_does_not_block():
+    """__aexit__ calls cancel(), not drain()."""
+    session = TraceSession(goal="test")
+    session.add_action(_make_action())
+
+    async def never_returns(system, prompt):
+        await asyncio.sleep(999)
+        return '{"score": 5, "explanation": "done"}'
+
+    prov = MagicMock()
+    prov.ajudge = never_returns
+
+    async with BackgroundScorer(provider=prov) as scorer:
+        scorer.submit(session)
+    # If __aexit__ called drain(), this test would hang forever
 
 
 @pytest.mark.asyncio
@@ -298,8 +348,11 @@ async def test_background_scorer_worker_error_does_not_crash_worker():
     prov = MagicMock()
     prov.ajudge = flaky_judge
 
-    async with BackgroundScorer(provider=prov) as scorer:
-        scorer.submit(bad_session)    # will raise inside worker
-        scorer.submit(good_session)   # should still be scored
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(bad_session)    # will raise inside worker
+    scorer.submit(good_session)   # should still be scored
+    await scorer.drain()
+    await scorer.cancel()
 
     assert good_session.actions[0].score == 5.0

@@ -225,7 +225,8 @@ class BackgroundScorer:
 
     Intended to be used as a long-lived application-level singleton.
     Individual requests call :meth:`submit` and move on — no request
-    ever waits for the judge::
+    ever waits for the judge.  At shutdown, call :meth:`cancel` to stop
+    immediately (un-scored sessions stay in SQLite for offline scoring)::
 
         # ── app startup (once) ──────────────────────────────
         scorer = BackgroundScorer(model="gpt-4o")
@@ -238,15 +239,14 @@ class BackgroundScorer:
             scorer.submit(session)                # non-blocking
             return result                         # returns immediately
 
-        # ── app shutdown (once, not latency-sensitive) ──────
-        await scorer.drain()
-        await scorer.close()
+        # ── app shutdown (immediate, no blocking) ───────────
+        await scorer.cancel()
 
     Or as an async context manager scoped to the application lifetime::
 
         async with BackgroundScorer(model="gpt-4o") as scorer:
             await serve_forever(scorer)   # submit() inside each request
-        # drain() called automatically on exit
+        # cancel() called automatically on exit — does not block
 
     Args:
         provider: Explicit :class:`JudgeProvider` instance.
@@ -297,9 +297,13 @@ class BackgroundScorer:
         if self._queue is not None:
             await self._queue.join()
 
-    async def close(self) -> None:
-        """Drain pending sessions and shut down the background worker."""
-        await self.drain()
+    async def cancel(self) -> None:
+        """Stop the worker immediately, dropping any un-scored sessions.
+
+        Use this at server shutdown when you don't want to block.
+        Un-scored sessions are still in SQLite and can be scored later
+        offline via :func:`score_trace`.
+        """
         if self._worker_task is not None:
             self._worker_task.cancel()
             try:
@@ -307,6 +311,14 @@ class BackgroundScorer:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+
+    async def close(self) -> None:
+        """Drain pending sessions then shut down the background worker.
+
+        If you don't want to wait, use :meth:`cancel` instead.
+        """
+        await self.drain()
+        await self.cancel()
 
     async def _worker(self) -> None:
         prov = _get_provider(self._provider, self._model, self._api_key)
@@ -339,7 +351,7 @@ class BackgroundScorer:
         return self
 
     async def __aexit__(self, *_: object) -> None:
-        await self.close()
+        await self.cancel()
 
 
 async def async_score_session(
