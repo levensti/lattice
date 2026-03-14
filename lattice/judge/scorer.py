@@ -223,24 +223,30 @@ class BackgroundScorer:
     At shutdown, call :meth:`drain` to wait for any in-flight scoring to
     finish before your process exits. That wait is not on the critical path.
 
-    Usage as an async context manager (recommended)::
+    Intended to be used as a long-lived application-level singleton.
+    Individual requests call :meth:`submit` and move on — no request
+    ever waits for the judge::
 
-        async with BackgroundScorer(model="gpt-4o") as scorer:
-            with trace_session(goal="...") as session:
-                result = do_latency_sensitive_work()
-            scorer.submit(session)   # non-blocking, returns immediately
-            # ... keep serving requests ...
-        # drain() called automatically here — outside the hot path
-
-    Or manage the lifecycle manually::
-
+        # ── app startup (once) ──────────────────────────────
         scorer = BackgroundScorer(model="gpt-4o")
         await scorer.start()
-        ...
-        scorer.submit(session)
-        ...
+
+        # ── per-request hot path (many times) ───────────────
+        async def handle_request(query):
+            with trace_session(goal="...") as session:
+                result = await run_agent(query)   # @action steps inside
+            scorer.submit(session)                # non-blocking
+            return result                         # returns immediately
+
+        # ── app shutdown (once, not latency-sensitive) ──────
         await scorer.drain()
         await scorer.close()
+
+    Or as an async context manager scoped to the application lifetime::
+
+        async with BackgroundScorer(model="gpt-4o") as scorer:
+            await serve_forever(scorer)   # submit() inside each request
+        # drain() called automatically on exit
 
     Args:
         provider: Explicit :class:`JudgeProvider` instance.
