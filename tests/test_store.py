@@ -6,14 +6,8 @@ import pytest
 
 from lattice import action, trace_session, traces
 from lattice.context import TraceSession
-from lattice.store import (
-    _DEFAULT_DB_PATH,
-    _db_path,
-    _local,
-    configure,
-    save_session,
-    traces as store_traces,
-)
+from lattice.backends.sqlite import DEFAULT_DB_PATH
+from lattice.store import configure, save_session, traces as store_traces
 
 
 @pytest.fixture(autouse=True)
@@ -21,14 +15,8 @@ def _isolate_db(tmp_path):
     """Point the store at a temp directory for every test."""
     db = tmp_path / "test_traces.db"
     configure(db_path=db)
-    # Clear any cached connection
-    _local.conn = None
-    _local.path = None
     yield
-    # Reset to default
-    configure(db_path=_DEFAULT_DB_PATH)
-    _local.conn = None
-    _local.path = None
+    configure(db_path=DEFAULT_DB_PATH)
 
 
 # ── save + query ──────────────────────────────────────────────────────
@@ -154,8 +142,6 @@ def test_upsert_on_duplicate_trace_id():
 def test_configure_changes_db_path(tmp_path):
     custom = tmp_path / "custom" / "traces.db"
     configure(db_path=custom)
-    _local.conn = None
-    _local.path = None
 
     save_session(TraceSession(trace_id="custom1", workflow_name="w", goal="g"))
     assert custom.exists()
