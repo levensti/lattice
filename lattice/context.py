@@ -7,7 +7,10 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from .judge.providers import InferenceProvider
 
 GroupType = Literal["loop", "parallel"]
 
@@ -36,12 +39,18 @@ class JudgeConfig:
     is evaluated. The ``system_prompt`` is the rubric — define scoring
     criteria, anchors, response format, and any reference material there.
 
+    Inference settings (model, API key, temperature, etc.) live on the
+    :class:`~lattice.judge.providers.InferenceProvider` instance passed
+    via ``provider``. ``JudgeConfig`` only controls *evaluation semantics*
+    — the rubric and prompt format.
+
     Examples::
+
+        from lattice.judge.providers import OpenAIProvider, AnthropicProvider
 
         @action(
             goal="Summarise the paper into 3 bullet points",
             judge=JudgeConfig(
-                model="claude-opus-4-6",
                 system_prompt=\"\"\"You evaluate research summaries.
 
 Score 1: Wrong number of bullets or major factual errors.
@@ -51,14 +60,21 @@ Score 4: 3 accurate bullets, minor wording issues.
 Score 5: 3 tight, distinct, fully accurate bullets.
 
 Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "..."}\"\"\",
+                provider=AnthropicProvider("claude-opus-4-6"),
             ),
         )
         def summarise(paper): ...
 
-        # Full control — bring your own provider instance
+        # Use any OpenAI-compatible endpoint (Fireworks, Sail, etc.)
         @action(
             goal="...",
-            judge=JudgeConfig(system_prompt="...", provider=my_judge),
+            judge=JudgeConfig(
+                system_prompt="...",
+                provider=OpenAIProvider(
+                    "accounts/fireworks/my-model",
+                    api_base="https://api.fireworks.ai/inference/v1",
+                ),
+            ),
         )
         def step(): ...
 
@@ -67,49 +83,29 @@ Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "...
             Define scoring criteria, per-score anchors, response format, and
             any reference material here. This is the system turn sent to the
             judge LLM on every call.
-        model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
-            Resolved via the same routing logic as :func:`score_trace`.
-        api_key: API key override. Falls back to the relevant environment
-            variable when omitted.
-        temperature: Sampling temperature passed to the judge LLM.
-        top_p: Top-p sampling parameter passed to the judge LLM.
+        provider: **Required.** :class:`~lattice.judge.providers.InferenceProvider`
+            instance that handles the actual LLM call.
         action_prompt_builder: Custom callable that fully replaces the default
             user prompt. Must accept ``name``, ``description``, ``goal``,
             ``input_data``, ``output_data`` as keyword arguments and return a
             string.
-        provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
-            instance. When set, ``model`` and ``api_key`` are ignored.
     """
 
     def __init__(
         self,
         *,
         system_prompt: str,
-        model: str | None = None,
-        api_key: str | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
+        provider: InferenceProvider,
         action_prompt_builder: Callable | None = None,
-        provider: Any = None,
     ) -> None:
         self.system_prompt = system_prompt
-        self.model = model
-        self.api_key = api_key
-        self.temperature = temperature
-        self.top_p = top_p
-        self.action_prompt_builder = action_prompt_builder
         self.provider = provider
+        self.action_prompt_builder = action_prompt_builder
 
     def __repr__(self) -> str:
         parts = ["system_prompt=..."]
         if self.provider is not None:
             parts.append(f"provider={self.provider!r}")
-        elif self.model:
-            parts.append(f"model={self.model!r}")
-        if self.temperature is not None:
-            parts.append(f"temperature={self.temperature}")
-        if self.top_p is not None:
-            parts.append(f"top_p={self.top_p}")
         return f"JudgeConfig({', '.join(parts)})"
 
 

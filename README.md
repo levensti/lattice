@@ -13,7 +13,7 @@ pip install -e .
 ## Quick Start
 
 ```python
-from lattice import action, trace_session, score_trace, find_bottlenecks, JudgeConfig
+from lattice import action, trace_session, score_trace, find_bottlenecks, OpenAIProvider
 
 @action(goal="Must return at least 3 factual claims with sources")
 def researcher(topic: str) -> str:
@@ -27,7 +27,7 @@ with trace_session(goal="Produce a well-researched article") as session:
     notes = researcher("quantum computing")
     article = writer(notes)
 
-score_trace(session, model="gpt-4o")
+score_trace(session, provider=OpenAIProvider("gpt-4o"))
 for b in find_bottlenecks(session):
     print(f"{b.action_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
 ```
@@ -100,34 +100,85 @@ with trace_session(goal="Find and summarize relevant results") as session:
 
 ## Scoring
 
-Pass `model=` to `score_trace` — the provider and API key are resolved automatically:
+Scoring requires an `InferenceProvider` — an explicit object that knows how to call your LLM. Construct a provider and pass it to `score_trace`:
 
 ```python
-score_trace(session, model="gpt-4o")                   # uses OPENAI_API_KEY
-score_trace(session, model="claude-sonnet-4-20250514")  # uses ANTHROPIC_API_KEY
-score_trace(session, model="google/gemini-2.0-flash")   # uses OPENROUTER_API_KEY
+from lattice import OpenAIProvider, AnthropicProvider, OpenRouterProvider
+
+score_trace(session, provider=OpenAIProvider("gpt-4o"))
+score_trace(session, provider=AnthropicProvider("claude-sonnet-4-20250514"))
+score_trace(session, provider=OpenRouterProvider("google/gemini-2.0-flash"))
 ```
 
-| Model name                      | Routes to  | Env var              |
-| ------------------------------- | ---------- | -------------------- |
-| `gpt-*`, `o1-*`, `o3-*`, `o4-*` | OpenAI     | `OPENAI_API_KEY`     |
-| `claude-*`                      | Anthropic  | `ANTHROPIC_API_KEY`  |
-| Names containing `/`            | OpenRouter | `OPENROUTER_API_KEY` |
-| Anything else                   | OpenRouter | `OPENROUTER_API_KEY` |
+Each provider reads its API key from the standard environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) or accepts an explicit `api_key=`. Use `async_score_trace` for concurrent scoring.
 
-You can also pass `api_key=` explicitly or a custom `provider=` instance. Use `async_score_trace` for concurrent scoring.
+### Providers
+
+| Class                | Wire protocol      | Env var              |
+| -------------------- | ------------------ | -------------------- |
+| `OpenAIProvider`     | Chat Completions or Responses | `OPENAI_API_KEY`     |
+| `AnthropicProvider`  | Messages           | `ANTHROPIC_API_KEY`  |
+| `OpenRouterProvider` | Chat Completions   | `OPENROUTER_API_KEY` |
+
+Each provider's wire protocol is controlled by the `ApiType` enum. `OpenAIProvider` defaults to `CHAT_COMPLETIONS` but also supports the newer `RESPONSES` API:
+
+```python
+from lattice import OpenAIProvider, ApiType
+
+# Default — Chat Completions (/v1/chat/completions)
+provider = OpenAIProvider("gpt-4o")
+
+# Responses API (/v1/responses)
+provider = OpenAIProvider("gpt-4o", api_type=ApiType.RESPONSES)
+```
+
+`OpenAIProvider` also supports custom endpoints for providers like Fireworks or Sail via `api_base=`:
+
+```python
+provider = OpenAIProvider(
+    "accounts/fireworks/my-model",
+    api_base="https://api.fireworks.ai/inference/v1",
+    api_key="fw-...",
+)
+```
+
+### Bring your own provider
+
+Subclass `InferenceProvider`, set `api_type`, and implement the matching method pair:
+
+```python
+from lattice import InferenceProvider, ApiType
+
+class MyProvider(InferenceProvider):
+    api_type = ApiType.CHAT_COMPLETIONS
+
+    def _chat_completions(self, system_prompt: str, user_prompt: str) -> str:
+        return my_llm_call(system_prompt, user_prompt)
+
+    async def _achat_completions(self, system_prompt: str, user_prompt: str) -> str:
+        return await my_async_llm_call(system_prompt, user_prompt)
+
+score_trace(session, provider=MyProvider())
+```
+
+The `api_type` determines which internal method `judge()` / `ajudge()` dispatches to:
+
+| `ApiType`            | Sync method             | Async method              |
+| -------------------- | ----------------------- | ------------------------- |
+| `CHAT_COMPLETIONS`   | `_chat_completions()`   | `_achat_completions()`    |
+| `RESPONSES`          | `_responses()`          | `_aresponses()`           |
+| `MESSAGES`           | `_messages()`           | `_amessages()`            |
 
 ### Custom rubric per action
 
-Attach a `JudgeConfig` to any `@action` to give that step its own rubric and model. The `system_prompt` is the rubric — define scoring criteria, per-score anchors, and any reference material there:
+Attach a `JudgeConfig` to any `@action` to give that step its own rubric and provider. The `system_prompt` is the rubric — define scoring criteria, per-score anchors, and any reference material there. The `provider` is the `InferenceProvider` instance for the judge LLM:
 
 ```python
-from lattice import JudgeConfig
+from lattice import JudgeConfig, AnthropicProvider
 
 @action(
     goal="Summarise the paper into 3 bullet points",
     judge=JudgeConfig(
-        model="claude-opus-4-6",
         system_prompt="""You evaluate research summaries.
 
 Score 1: Wrong number of bullets or major factual errors.
@@ -137,12 +188,13 @@ Score 4: 3 accurate bullets, minor wording issues.
 Score 5: 3 tight, distinct, fully accurate bullets.
 
 Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
+        provider=AnthropicProvider("claude-opus-4-6"),
     ),
 )
 def summarise(paper): ...
 ```
 
-When a `judge=` is set on an action, its `system_prompt` and model override the global judge for that step only. Actions without a `judge=` fall back to the global judge passed to `score_trace`.
+When a `judge=` is set on an action, its `system_prompt` and `provider` override the global judge for that step only. Actions without a `judge=` fall back to the global provider passed to `score_trace`.
 
 ### Global system prompt
 
@@ -151,7 +203,7 @@ Override the default rubric for all actions at once:
 ```python
 score_trace(
     session,
-    model="gpt-4o",
+    provider=OpenAIProvider("gpt-4o"),
     system_prompt="""You are a strict technical evaluator. Score 1-5.
 Respond: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
 )
@@ -162,7 +214,7 @@ Respond: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
 Score off the critical path so the judge never blocks your request handler:
 
 ```python
-scorer = BackgroundScorer(model="gpt-4o")
+scorer = BackgroundScorer(provider=OpenAIProvider("gpt-4o"))
 await scorer.start()
 
 async def handle_request(query):
@@ -227,7 +279,7 @@ with trace_session(goal="...", persist=False) as session:
 
 ### Custom storage
 
-The default `SQLiteStore` can be swapped for any class that implements the `Store` protocol (`lattice.storage`):
+The default `SQLiteStore` can be swapped for any class that subclasses the `Store` ABC (`lattice.storage`):
 
 ```python
 from lattice.storage import Store
