@@ -15,7 +15,7 @@ from ..context import (
     TraceSession,
     TransitionRecord,
 )
-from .base import StorageStore
+from .base import Store
 
 DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces.db"
 
@@ -37,7 +37,7 @@ ON traces (workflow_name)
 """
 
 
-class SQLiteStore(StorageStore):
+class SQLiteStore(Store):
     """Stores traces in a local SQLite database.
 
     Args:
@@ -78,7 +78,7 @@ class SQLiteStore(StorageStore):
         self._local.path = self._db_path
         return conn
 
-    # ── StorageStore interface ───────────────────────────────────────
+    # ── Store interface ───────────────────────────────────────
 
     def save_session(self, session: TraceSession) -> None:
         """Persist a completed trace session."""

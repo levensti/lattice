@@ -1,4 +1,4 @@
-"""Trace persistence — thin shim that delegates to the active StorageStore.
+"""Trace persistence — thin shim that delegates to the active Store.
 
 The default backend is :class:`~lattice.backends.SQLiteStore` (zero config).
 Swap it out via :func:`configure`::
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .backends.base import StorageStore
+from .backends.base import Store
 from .backends.sqlite import DEFAULT_DB_PATH, SQLiteStore
 from .context import TraceSession
 
@@ -27,13 +27,13 @@ from .context import TraceSession
 # keeps working.
 _DEFAULT_DB_PATH = DEFAULT_DB_PATH
 
-_backend: StorageStore = SQLiteStore()
+_backend: Store = SQLiteStore()
 
 
 def configure(
     *,
     db_path: str | Path | None = None,
-    backend: StorageStore | None = None,
+    backend: Store | None = None,
 ) -> None:
     """Override the default storage backend.
 
