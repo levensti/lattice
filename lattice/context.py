@@ -332,7 +332,7 @@ def trace_session(
         _current_span_id.reset(span_token)
         if persist:
             try:
-                from .store import save_session
+                from .storage.store import save_session
                 save_session(session)
             except Exception:
                 logger.warning(

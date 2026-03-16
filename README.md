@@ -168,6 +168,29 @@ with trace_session(goal="...", persist=False) as session:
     ...
 ```
 
+### Custom storage
+
+The default `SQLiteStore` can be swapped for any class that implements the `Store` protocol (`lattice.storage`):
+
+```python
+from lattice.storage import Store
+from lattice import configure
+
+class PostgresStore(Store):
+    def save_session(self, session): ...
+    def load_sessions(self, *, workflow=None, last=None, trace_id=None): ...
+
+configure(backend=PostgresStore(os.environ["DATABASE_URL"]))
+```
+
+`SQLiteStore` is also importable directly if you need to instantiate it explicitly:
+
+```python
+from lattice.storage import SQLiteStore
+
+configure(backend=SQLiteStore("/custom/path/traces.db"))
+```
+
 ## Examples
 
 See `examples/`:

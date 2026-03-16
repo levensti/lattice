@@ -26,9 +26,10 @@ from .judge.prompt_builder import (
     SessionPromptBuilder,
 )
 from .judge.providers import JudgeProvider
-from .judge.scorer import async_score_session, async_score_trace, score_session, score_trace
+from .judge.scorer import async_score_session, async_score_trace, BackgroundScorer, score_session, score_trace
 from .logging_utils import print_trace_summary
-from .store import configure, traces
+from .storage import SQLiteStore, Store
+from .storage.store import configure, traces
 
 __all__ = [
     "action",
@@ -48,6 +49,7 @@ __all__ = [
     "TransitionRecord",
     "async_score_session",
     "async_score_trace",
+    "BackgroundScorer",
     "configure",
     "copy_trace_context",
     "find_bottlenecks",
@@ -56,6 +58,8 @@ __all__ = [
     "print_trace_summary",
     "score_session",
     "score_trace",
+    "SQLiteStore",
+    "Store",
     "trace_action",
     "trace_activation",
     "trace_iterations",

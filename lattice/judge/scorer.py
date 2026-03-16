@@ -213,6 +213,147 @@ def score_session(
     return score, explanation
 
 
+class BackgroundScorer:
+    """Score sessions off the critical path using a background worker.
+
+    The critical path calls :meth:`submit` — a non-blocking
+    ``queue.put_nowait()`` that returns immediately. A background asyncio
+    worker drains the queue and scores each session as it arrives.
+
+    At shutdown, call :meth:`drain` to wait for any in-flight scoring to
+    finish before your process exits. That wait is not on the critical path.
+
+    Intended to be used as a long-lived application-level singleton.
+    Individual requests call :meth:`submit` and move on — no request
+    ever waits for the judge.  At shutdown, call :meth:`cancel` to stop
+    immediately (un-scored sessions stay in SQLite for offline scoring)::
+
+        # ── app startup (once) ──────────────────────────────
+        scorer = BackgroundScorer(model="gpt-4o")
+        await scorer.start()
+
+        # ── per-request hot path (many times) ───────────────
+        async def handle_request(query):
+            with trace_session(goal="...") as session:
+                result = await run_agent(query)   # @action steps inside
+            scorer.submit(session)                # non-blocking
+            return result                         # returns immediately
+
+        # ── app shutdown (immediate, no blocking) ───────────
+        await scorer.cancel()
+
+    Or as an async context manager scoped to the application lifetime::
+
+        async with BackgroundScorer(model="gpt-4o") as scorer:
+            await serve_forever(scorer)   # submit() inside each request
+        # cancel() called automatically on exit — does not block
+
+    Args:
+        provider: Explicit :class:`JudgeProvider` instance.
+        model: Model name — provider is resolved automatically.
+        api_key: API key for the judge provider.
+        max_concurrency: Maximum parallel judge calls per session.
+        system_prompt: Override the judge system prompt.
+        action_prompt_builder: Custom prompt builder for each action.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: JudgeProvider | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        max_concurrency: int = 5,
+        system_prompt: str = JUDGE_SYSTEM_PROMPT,
+        action_prompt_builder: ActionPromptBuilder | None = None,
+    ) -> None:
+        self._provider = provider
+        self._model = model
+        self._api_key = api_key
+        self._max_concurrency = max_concurrency
+        self._system_prompt = system_prompt
+        self._action_prompt_builder = action_prompt_builder
+        self._queue: asyncio.Queue[TraceSession] | None = None
+        self._worker_task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        """Start the background worker. Must be called before :meth:`submit`."""
+        self._queue = asyncio.Queue()
+        self._worker_task = asyncio.create_task(self._worker())
+
+    def submit(self, session: TraceSession) -> None:
+        """Enqueue *session* for background scoring. Non-blocking."""
+        if self._queue is None:
+            raise RuntimeError(
+                "BackgroundScorer not started — call `await scorer.start()` first."
+            )
+        self._queue.put_nowait(session)
+
+    async def drain(self) -> None:
+        """Wait for all submitted sessions to finish scoring.
+
+        Safe to call at shutdown — this is not on the critical path.
+        """
+        if self._queue is not None:
+            await self._queue.join()
+
+    async def cancel(self) -> None:
+        """Stop the worker immediately, dropping any un-scored sessions.
+
+        Use this at server shutdown when you don't want to block.
+        Un-scored sessions are still in SQLite and can be scored later
+        offline via :func:`score_trace`.
+        """
+        if self._worker_task is not None:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+            self._worker_task = None
+
+    async def close(self) -> None:
+        """Drain pending sessions then shut down the background worker.
+
+        If you don't want to wait, use :meth:`cancel` instead.
+        """
+        await self.drain()
+        await self.cancel()
+
+    async def _worker(self) -> None:
+        prov = _get_provider(self._provider, self._model, self._api_key)
+        while True:
+            session = await self._queue.get()
+            try:
+                sem = asyncio.Semaphore(self._max_concurrency)
+                scorable = [a for a in session.actions if a.error is None]
+
+                async def _bounded(action: ActionRecord) -> None:
+                    async with sem:
+                        await _async_score_single_action(
+                            action, prov, self._system_prompt, self._action_prompt_builder
+                        )
+
+                await asyncio.gather(*[_bounded(a) for a in scorable])
+                logger.info(
+                    "BackgroundScorer: finished scoring session %s (%d actions)",
+                    session.trace_id, len(scorable),
+                )
+            except Exception:
+                logger.exception(
+                    "BackgroundScorer: error scoring session %s", session.trace_id
+                )
+            finally:
+                self._queue.task_done()
+
+    async def __aenter__(self) -> "BackgroundScorer":
+        await self.start()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.cancel()
+
+
 async def async_score_session(
     session: TraceSession,
     *,
