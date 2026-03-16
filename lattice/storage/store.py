@@ -19,9 +19,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .backends.base import Store
-from .backends.sqlite import DEFAULT_DB_PATH, SQLiteStore
-from .context import TraceSession
+from .base import Store
+from .sqlite import DEFAULT_DB_PATH, SQLiteStore
+from ..context import TraceSession
 
 # Re-export so external code that does `from lattice.store import _DEFAULT_DB_PATH`
 # keeps working.

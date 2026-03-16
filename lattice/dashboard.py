@@ -16,7 +16,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from .store import traces
+from .storage.store import traces
 
 
 def _score_bar(score: float | None) -> str:

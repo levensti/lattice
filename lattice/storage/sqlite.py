@@ -51,7 +51,7 @@ class SQLiteStore(Store):
         lattice.configure(db_path="/tmp/my_traces.db")
 
         # or equivalently:
-        from lattice.backends import SQLiteStore
+        from lattice.storage import SQLiteStore
         lattice.configure(backend=SQLiteStore("/tmp/my_traces.db"))
     """
 

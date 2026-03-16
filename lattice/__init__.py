@@ -28,8 +28,8 @@ from .judge.prompt_builder import (
 from .judge.providers import JudgeProvider
 from .judge.scorer import async_score_session, async_score_trace, BackgroundScorer, score_session, score_trace
 from .logging_utils import print_trace_summary
-from .backends import SQLiteStore, Store
-from .store import configure, traces
+from .storage import SQLiteStore, Store
+from .storage.store import configure, traces
 
 __all__ = [
     "action",

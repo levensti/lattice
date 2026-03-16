@@ -6,8 +6,8 @@ import pytest
 
 from lattice import action, trace_session, traces
 from lattice.context import TraceSession
-from lattice.backends.sqlite import DEFAULT_DB_PATH
-from lattice.store import configure, save_session, traces as store_traces
+from lattice.storage.sqlite import DEFAULT_DB_PATH
+from lattice.storage.store import configure, save_session, traces as store_traces
 
 
 @pytest.fixture(autouse=True)
