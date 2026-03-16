@@ -21,7 +21,7 @@ RATING_SCALE = (
 
 RESPONSE_FORMAT = (
     'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
-    '{"score": <number 1-5>, "explanation": "<one or two sentences>"}'
+    '{"reasoning": "<think step by step before scoring>", "score": <number 1-5>, "explanation": "<one or two sentences>"}'
 )
 
 
@@ -58,21 +58,52 @@ def build_judge_prompt(
     goal: str,
     input_data: str,
     output_data: str,
+    criteria: dict[str, str] | None = None,
+    reference: str | None = None,
 ) -> str:
-    """Build the user prompt sent to the judge LLM for a single action."""
+    """Build the user prompt sent to the judge LLM for a single action.
+
+    When *criteria* are provided the judge evaluates each one and returns
+    per-criterion scores in a single call. When *reference* is provided it is
+    injected as a calibration anchor for the judge.
+    """
     goal_block = goal or "Assess overall quality, relevance, and correctness."
 
-    return (
-        f"Evaluate the following action output.\n\n"
-        f"**Action name:** {name}\n"
-        f"**Description:** {description or 'No description provided.'}\n\n"
-        f"**Action goal:**\n{goal_block}\n\n"
-        f"**Input to the action:**\n{input_data[:MAX_FIELD_CHARS]}\n\n"
-        f"**Output from the action:**\n{output_data[:MAX_FIELD_CHARS]}\n\n"
-        f"Rate the quality of this output on a scale of 1 to 5:\n"
-        f"{RATING_SCALE}\n"
-        f"{RESPONSE_FORMAT}"
-    )
+    parts: list[str] = [
+        "Evaluate the following action output.\n",
+        f"**Action name:** {name}",
+        f"**Description:** {description or 'No description provided.'}\n",
+        f"**Action goal:**\n{goal_block}\n",
+        f"**Input to the action:**\n{input_data[:MAX_FIELD_CHARS]}\n",
+        f"**Output from the action:**\n{output_data[:MAX_FIELD_CHARS]}\n",
+    ]
+
+    if reference:
+        parts.append(f"**Reference answer (ground truth):**\n{reference[:MAX_FIELD_CHARS]}\n")
+
+    if criteria:
+        parts.append("**Evaluation criteria:**")
+        for crit_name, crit_desc in criteria.items():
+            parts.append(f"  - {crit_name}: {crit_desc}")
+        parts.append("")
+        parts.append("Rate the output on a scale of 1 to 5 for **each criterion**:\n" + RATING_SCALE)
+
+        # Build per-criterion placeholders for the response format
+        criteria_json = ", ".join(
+            f'"{n}": {{"score": <1-5>, "explanation": "<sentence>"}}'
+            for n in criteria
+        )
+        response_format = (
+            'Respond with ONLY a JSON object in this exact format (no markdown fencing):\n'
+            f'{{"reasoning": "<think step by step before scoring>", "criteria": {{{criteria_json}}}, '
+            '"score": <overall average 1-5>, "explanation": "<one or two sentences overall>"}}'
+        )
+    else:
+        parts.append("Rate the quality of this output on a scale of 1 to 5:\n" + RATING_SCALE)
+        response_format = RESPONSE_FORMAT
+
+    parts.append(response_format)
+    return "\n".join(parts)
 
 
 def build_session_judge_prompt(

@@ -49,17 +49,62 @@ def _parse_judge_response(text: str) -> tuple[float, str]:
     return 0.0, f"Could not parse judge response: {text[:200]}"
 
 
+def _parse_criteria_response(
+    text: str,
+    criteria: dict[str, str],
+    prov: JudgeProvider,
+) -> list[JudgeResult]:
+    """Parse a criteria-based judge response into per-criterion JudgeResults."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    model_name = getattr(prov, "model", "custom")
+    try:
+        data = json.loads(cleaned)
+        criteria_data = data.get("criteria", {})
+        results = []
+        for crit_name in criteria:
+            entry = criteria_data.get(crit_name, {})
+            score = float(entry.get("score", 0))
+            explanation = entry.get("explanation", "")
+            results.append(JudgeResult(
+                score=score,
+                explanation=explanation,
+                name=crit_name,
+                model=model_name,
+            ))
+        return results
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        # Fallback: treat the whole response as a single score
+        score, explanation = _parse_judge_response(text)
+        first_name = next(iter(criteria))
+        return [JudgeResult(score=score, explanation=explanation, name=first_name, model=model_name)]
+
+
 def _build_prompt_for_action(
     action: ActionRecord,
     action_prompt_builder: ActionPromptBuilder | None = None,
+    criteria: dict[str, str] | None = None,
+    reference: str | None = None,
 ) -> str:
-    builder = action_prompt_builder or build_judge_prompt
-    return builder(
+    if action_prompt_builder is not None:
+        # Custom builder — full control, criteria/reference not injected
+        return action_prompt_builder(
+            name=action.name,
+            description=action.description,
+            goal=action.goal,
+            input_data=action.input_data,
+            output_data=action.output_data,
+        )
+    return build_judge_prompt(
         name=action.name,
         description=action.description,
         goal=action.goal,
         input_data=action.input_data,
         output_data=action.output_data,
+        criteria=criteria,
+        reference=reference,
     )
 
 
@@ -81,11 +126,6 @@ def _provider_from_config(config: JudgeConfig, fallback: JudgeProvider | None) -
     )
 
 
-def _result_label(config: JudgeConfig, prov: JudgeProvider) -> str:
-    """Human-readable label for a judge result: axis name or model name."""
-    return config.name or getattr(prov, "model", None) or "judge"
-
-
 def _apply_judge_results(action: ActionRecord, results: list[JudgeResult]) -> None:
     """Store *results* on *action*, setting the aggregate score/explanation."""
     action.judge_results = results
@@ -105,28 +145,23 @@ def _score_single_action(
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
-    if action.judges:
-        results = []
-        for config in action.judges:
-            prov = _provider_from_config(config, provider)
-            sys_prompt = config.system_prompt or system_prompt
-            builder = config.action_prompt_builder or action_prompt_builder
-            raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder))
-            score, explanation = _parse_judge_response(raw)
-            results.append(JudgeResult(
-                score=score,
-                explanation=explanation,
-                name=_result_label(config, prov),
-                model=getattr(prov, "model", "custom"),
-            ))
-        _apply_judge_results(action, results)
+    config = action.judge
+    prov = _provider_from_config(config, provider) if config else provider
+    if prov is None:
+        raise ValueError(
+            f"No judge provider configured for action '{action.name}'. "
+            "Pass provider=, model=, set OPENAI_API_KEY, or attach judge= to the action."
+        )
+    sys_prompt = (config.system_prompt if config else None) or system_prompt
+    builder = (config.action_prompt_builder if config else None) or action_prompt_builder
+    criteria = config.criteria if config else None
+    reference = config.reference if config else None
+
+    raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder, criteria=criteria, reference=reference))
+
+    if criteria:
+        _apply_judge_results(action, _parse_criteria_response(raw, criteria, prov))
     else:
-        if provider is None:
-            raise ValueError(
-                f"No judge provider configured for action '{action.name}'. "
-                "Pass provider=, model=, set OPENAI_API_KEY, or attach judges= to the action."
-            )
-        raw = provider.judge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
         action.score, action.score_explanation = _parse_judge_response(raw)
     logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
@@ -138,29 +173,23 @@ async def _async_score_single_action(
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
-    if action.judges:
-        async def _run_one(config: JudgeConfig) -> JudgeResult:
-            prov = _provider_from_config(config, provider)
-            sys_prompt = config.system_prompt or system_prompt
-            builder = config.action_prompt_builder or action_prompt_builder
-            raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder))
-            score, explanation = _parse_judge_response(raw)
-            return JudgeResult(
-                score=score,
-                explanation=explanation,
-                name=_result_label(config, prov),
-                model=getattr(prov, "model", "custom"),
-            )
+    config = action.judge
+    prov = _provider_from_config(config, provider) if config else provider
+    if prov is None:
+        raise ValueError(
+            f"No judge provider configured for action '{action.name}'. "
+            "Pass provider=, model=, set OPENAI_API_KEY, or attach judge= to the action."
+        )
+    sys_prompt = (config.system_prompt if config else None) or system_prompt
+    builder = (config.action_prompt_builder if config else None) or action_prompt_builder
+    criteria = config.criteria if config else None
+    reference = config.reference if config else None
 
-        results = await asyncio.gather(*[_run_one(c) for c in action.judges])
-        _apply_judge_results(action, list(results))
+    raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder, criteria=criteria, reference=reference))
+
+    if criteria:
+        _apply_judge_results(action, _parse_criteria_response(raw, criteria, prov))
     else:
-        if provider is None:
-            raise ValueError(
-                f"No judge provider configured for action '{action.name}'. "
-                "Pass provider=, model=, set OPENAI_API_KEY, or attach judges= to the action."
-            )
-        raw = await provider.ajudge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
         action.score, action.score_explanation = _parse_judge_response(raw)
     logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
@@ -204,13 +233,13 @@ def score_trace(
        automatically from the model name.
     3. Fall back to ``OPENAI_API_KEY`` environment variable with ``gpt-4o``.
 
-    Actions decorated with ``judges=[JudgeConfig(...)]`` use their own judge
-    config instead of the global one. When an action has multiple
-    :class:`~lattice.context.JudgeConfig` entries, all judges run and the
-    action's ``score`` is set to their mean; individual results are available
-    on ``action.judge_results``.
+    Actions decorated with ``judge=JudgeConfig(...)`` use their own judge
+    config instead of the global one. When the config includes ``criteria``,
+    the judge evaluates each criterion in a single call and per-criterion
+    scores are stored on ``action.judge_results``; the action's ``score``
+    is set to their mean.
 
-    The global provider is optional when every action has per-action judges.
+    The global provider is optional when every action has a per-action judge.
 
     Prompt customization:
 

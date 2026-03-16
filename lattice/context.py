@@ -30,54 +30,71 @@ class JudgeResult:
 
 
 class JudgeConfig:
-    """Configuration for a single evaluation axis.
+    """Configuration for the judge that evaluates an action.
 
-    Attach a list of these to ``@action(judges=[...])`` to evaluate an action
-    on multiple independent criteria — each ``JudgeConfig`` is one axis.
+    Attach to ``@action(judge=JudgeConfig(...))`` to configure how the action
+    is evaluated. The judge makes a **single** LLM call with structured
+    criteria and chain-of-thought reasoning before scoring.
 
     Examples::
 
-        # Two axes: factual accuracy and citation quality
+        # Simple — override the model for this action only
+        @action(
+            goal="Summarise accurately",
+            judge=JudgeConfig(model="claude-opus-4-6", temperature=0.0),
+        )
+        def summarise(doc): ...
+
+        # Multi-criteria rubric — one call, per-criterion scores
         @action(
             goal="Research and cite sources accurately",
-            judges=[
-                JudgeConfig(
-                    name="factual_accuracy",
-                    system_prompt="Score only whether the facts are correct.",
-                    model="gpt-4o",
-                    temperature=0.0,
-                ),
-                JudgeConfig(
-                    name="citation_quality",
-                    system_prompt="Score only whether sources are cited properly.",
-                    model="gpt-4o",
-                ),
-            ],
+            judge=JudgeConfig(
+                model="claude-opus-4-6",
+                criteria={
+                    "factual_accuracy": "Are all claims supported by verifiable evidence?",
+                    "citation_quality": "Are sources credible and cited properly?",
+                },
+            ),
         )
         def research(topic): ...
 
-        # Full control — bring your own provider instance
+        # With a reference answer for calibration
         @action(
-            goal="...",
-            judges=[JudgeConfig(name="retrieval_accuracy", provider=my_rag_judge)],
+            goal="Answer the question correctly",
+            judge=JudgeConfig(
+                model="gpt-4o",
+                criteria={"correctness": "Does the answer match the reference?"},
+                reference="Python was created by Guido van Rossum in 1991.",
+            ),
         )
+        def answer(question): ...
+
+        # Full control — bring your own provider instance
+        @action(goal="...", judge=JudgeConfig(provider=my_rag_judge))
         def step(): ...
 
     Args:
-        name: Label for this evaluation axis (e.g. ``"factual_accuracy"``).
-            Shown in ``score_explanation`` and stored on :class:`JudgeResult`.
-            Defaults to the model name when omitted.
         model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
             Resolved via the same routing logic as :func:`score_trace`.
         api_key: API key override. Falls back to the relevant environment
             variable when omitted.
-        system_prompt: System prompt for this judge. Defines what criterion
-            to evaluate. Falls back to the global system prompt if omitted.
+        system_prompt: Override the judge system prompt. Falls back to the
+            global system prompt passed to :func:`score_trace` if omitted.
         temperature: Sampling temperature passed to the judge LLM.
         top_p: Top-p sampling parameter passed to the judge LLM.
-        action_prompt_builder: Custom callable that builds the user prompt.
-            Must accept ``name``, ``description``, ``goal``, ``input_data``,
-            ``output_data`` as keyword arguments and return a string.
+        criteria: Mapping of criterion name → description. The judge evaluates
+            each criterion separately in a **single** LLM call and returns
+            per-criterion scores. When omitted, a single overall score is
+            produced. Individual results are stored on
+            ``action.judge_results``.
+        reference: Gold-standard reference answer injected into the judge
+            prompt. Use this for fact-checking or tasks where a correct answer
+            is known — the judge calibrates its score against the reference.
+        action_prompt_builder: Custom callable that fully replaces the default
+            user prompt. Must accept ``name``, ``description``, ``goal``,
+            ``input_data``, ``output_data`` as keyword arguments and return a
+            string. When set, ``criteria`` and ``reference`` are not injected
+            automatically (the builder controls the full prompt).
         provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
             instance. When set, ``model`` and ``api_key`` are ignored.
     """
@@ -85,32 +102,36 @@ class JudgeConfig:
     def __init__(
         self,
         *,
-        name: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        criteria: dict[str, str] | None = None,
+        reference: str | None = None,
         action_prompt_builder: Callable | None = None,
         provider: Any = None,
     ) -> None:
-        self.name = name
         self.model = model
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.top_p = top_p
+        self.criteria = criteria
+        self.reference = reference
         self.action_prompt_builder = action_prompt_builder
         self.provider = provider
 
     def __repr__(self) -> str:
         parts = []
-        if self.name:
-            parts.append(f"name={self.name!r}")
         if self.provider is not None:
             parts.append(f"provider={self.provider!r}")
         elif self.model:
             parts.append(f"model={self.model!r}")
+        if self.criteria:
+            parts.append(f"criteria={list(self.criteria)!r}")
+        if self.reference:
+            parts.append("reference=...")
         if self.system_prompt:
             parts.append("system_prompt=...")
         if self.temperature is not None:
@@ -141,9 +162,9 @@ class ActionRecord:
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None
-    # Per-action judge configs — not persisted (stripped in to_dict)
-    judges: list[JudgeConfig] = field(default_factory=list, compare=False)
-    # Individual scores from each judge — persisted
+    # Per-action judge config — not persisted (stripped in to_dict)
+    judge: JudgeConfig | None = field(default=None, compare=False)
+    # Individual scores per criterion — persisted
     judge_results: list[JudgeResult] = field(default_factory=list)
 
 
@@ -199,10 +220,10 @@ class TraceSession:
         """Serialize the session to a plain dict (suitable for JSON)."""
         d = asdict(self)
         d.pop("_action_counter", None)
-        # judges contains non-serializable objects (callables, provider instances);
+        # judge contains non-serializable objects (callables, provider instances);
         # strip it — only judge_results (plain scores) are persisted.
         for action_dict in d.get("actions", []):
-            action_dict.pop("judges", None)
+            action_dict.pop("judge", None)
         return d
 
 

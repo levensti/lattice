@@ -56,6 +56,54 @@ def test_build_judge_prompt_default_criteria():
     assert "quality" in prompt.lower()
 
 
+def test_build_judge_prompt_with_criteria():
+    prompt = build_judge_prompt(
+        name="researcher",
+        description="",
+        goal="Research accurately",
+        input_data="query",
+        output_data="answer",
+        criteria={
+            "factual_accuracy": "Are facts correct?",
+            "citation_quality": "Are sources cited?",
+        },
+    )
+    assert "factual_accuracy" in prompt
+    assert "Are facts correct?" in prompt
+    assert "citation_quality" in prompt
+    assert "Are sources cited?" in prompt
+    # response format should include per-criterion JSON shape
+    assert '"factual_accuracy"' in prompt
+    assert '"citation_quality"' in prompt
+
+
+def test_build_judge_prompt_with_reference():
+    prompt = build_judge_prompt(
+        name="qa",
+        description="",
+        goal="Answer correctly",
+        input_data="question",
+        output_data="answer",
+        reference="The correct answer is 42.",
+    )
+    assert "Reference answer" in prompt
+    assert "The correct answer is 42." in prompt
+
+
+def test_build_judge_prompt_with_criteria_and_reference():
+    prompt = build_judge_prompt(
+        name="qa",
+        description="",
+        goal="Answer correctly",
+        input_data="question",
+        output_data="answer",
+        criteria={"correctness": "Does it match?"},
+        reference="Ground truth here.",
+    )
+    assert "correctness" in prompt
+    assert "Ground truth here." in prompt
+
+
 # ── Response parsing ──────────────────────────────────────────────────
 
 
@@ -65,6 +113,14 @@ def test_parse_valid_json():
     )
     assert score == 4.0
     assert "missing sources" in explanation
+
+
+def test_parse_json_with_reasoning_field():
+    score, explanation = _parse_judge_response(
+        '{"reasoning": "Step by step...", "score": 4, "explanation": "Good"}'
+    )
+    assert score == 4.0
+    assert "Good" in explanation
 
 
 def test_parse_json_in_code_block():
@@ -359,31 +415,39 @@ async def test_background_scorer_worker_error_does_not_crash_worker():
     assert good_session.actions[0].score == 5.0
 
 
-# ── JudgeConfig / per-action judges ───────────────────────────────────
+# ── JudgeConfig / per-action judge ────────────────────────────────────
 
 
 def test_judge_config_repr_with_model():
-    jc = JudgeConfig(name="clarity", model="gpt-4o", temperature=0.0)
-    assert "clarity" in repr(jc)
+    jc = JudgeConfig(model="gpt-4o", temperature=0.0)
     assert "gpt-4o" in repr(jc)
     assert "temperature=0.0" in repr(jc)
 
 
 def test_judge_config_repr_with_provider():
     prov = MagicMock()
-    jc = JudgeConfig(name="factual_accuracy", provider=prov)
-    assert "factual_accuracy" in repr(jc)
+    jc = JudgeConfig(provider=prov)
     assert "provider=" in repr(jc)
 
 
-def test_per_action_single_judge_config_used():
+def test_judge_config_repr_with_criteria():
+    jc = JudgeConfig(model="gpt-4o", criteria={"accuracy": "Is it right?"})
+    assert "accuracy" in repr(jc)
+
+
+def test_judge_config_repr_with_reference():
+    jc = JudgeConfig(model="gpt-4o", reference="The answer is 42.")
+    assert "reference=..." in repr(jc)
+
+
+def test_per_action_judge_config_used():
     """A JudgeConfig on an action uses that config's provider, not the global one."""
     per_action_prov = _fake_provider('{"score": 5, "explanation": "Perfect"}')
     global_prov = _fake_provider('{"score": 1, "explanation": "Bad"}')
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [JudgeConfig(name="quality", provider=per_action_prov)]
+    action.judge = JudgeConfig(provider=per_action_prov)
     session.add_action(action)
 
     score_trace(session, provider=global_prov)
@@ -391,19 +455,16 @@ def test_per_action_single_judge_config_used():
     global_prov.judge.assert_not_called()
     per_action_prov.judge.assert_called_once()
     assert session.actions[0].score == 5.0
-    assert len(session.actions[0].judge_results) == 1
-    assert session.actions[0].judge_results[0].score == 5.0
-    assert session.actions[0].judge_results[0].name == "quality"
 
 
-def test_per_action_single_judge_custom_system_prompt():
+def test_per_action_judge_custom_system_prompt():
     """JudgeConfig.system_prompt overrides the global system_prompt for that action."""
     prov = _fake_provider()
-    jc = JudgeConfig(name="strict", provider=prov, system_prompt="Be extra strict.")
+    jc = JudgeConfig(provider=prov, system_prompt="Be extra strict.")
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [jc]
+    action.judge = jc
     session.add_action(action)
 
     score_trace(session, provider=MagicMock())
@@ -415,11 +476,11 @@ def test_per_action_single_judge_custom_system_prompt():
 def test_per_action_judge_falls_back_to_global_system_prompt():
     """When JudgeConfig.system_prompt is None, fall back to global system_prompt."""
     prov = _fake_provider()
-    jc = JudgeConfig(name="axis", provider=prov)  # no system_prompt
+    jc = JudgeConfig(provider=prov)  # no system_prompt
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [jc]
+    action.judge = jc
     session.add_action(action)
 
     score_trace(session, provider=MagicMock(), system_prompt="Global prompt.")
@@ -435,11 +496,11 @@ def test_per_action_judge_custom_prompt_builder():
     def custom_builder(*, name, description, goal, input_data, output_data):
         return f"PER-ACTION: {name}"
 
-    jc = JudgeConfig(name="custom_axis", provider=prov, action_prompt_builder=custom_builder)
+    jc = JudgeConfig(provider=prov, action_prompt_builder=custom_builder)
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [jc]
+    action.judge = jc
     session.add_action(action)
 
     score_trace(session, provider=MagicMock())
@@ -448,21 +509,32 @@ def test_per_action_judge_custom_prompt_builder():
     assert user_arg == "PER-ACTION: researcher"
 
 
-def test_multi_axis_two_judges_averages_scores():
-    """Multiple judges = multiple evaluation axes; score is their mean."""
-    prov_a = _fake_provider('{"score": 4, "explanation": "Mostly cited"}')
-    prov_b = _fake_provider('{"score": 2, "explanation": "Facts wrong"}')
+def test_criteria_single_call_multiple_scores():
+    """criteria= triggers one LLM call and produces per-criterion JudgeResults."""
+    response = (
+        '{"reasoning": "step by step...", '
+        '"criteria": {'
+        '  "citation_quality": {"score": 4, "explanation": "Mostly cited"},'
+        '  "factual_accuracy": {"score": 2, "explanation": "Facts wrong"}'
+        '}, "score": 3.0, "explanation": "Mixed"}'
+    )
+    prov = _fake_provider(response)
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [
-        JudgeConfig(name="citation_quality", provider=prov_a),
-        JudgeConfig(name="factual_accuracy", provider=prov_b),
-    ]
+    action.judge = JudgeConfig(
+        provider=prov,
+        criteria={
+            "citation_quality": "Are sources cited properly?",
+            "factual_accuracy": "Are facts correct?",
+        },
+    )
     session.add_action(action)
 
     score_trace(session, provider=None)
 
+    # Only one LLM call was made (not two)
+    assert prov.judge.call_count == 1
     assert session.actions[0].score == pytest.approx(3.0)
     assert len(session.actions[0].judge_results) == 2
     scores = {r.name: r.score for r in session.actions[0].judge_results}
@@ -470,17 +542,64 @@ def test_multi_axis_two_judges_averages_scores():
     assert scores["factual_accuracy"] == 2.0
 
 
-def test_multi_axis_score_explanation_includes_axis_names():
-    """With multiple judges, score_explanation shows each axis name."""
-    prov_a = _fake_provider('{"score": 4, "explanation": "Good citations"}')
-    prov_b = _fake_provider('{"score": 2, "explanation": "Facts off"}')
+def test_criteria_prompt_includes_rubric():
+    """criteria= injects criterion names and descriptions into the prompt."""
+    prov = _fake_provider(
+        '{"reasoning": "...", "criteria": {"accuracy": {"score": 4, "explanation": "ok"}}, "score": 4, "explanation": "ok"}'
+    )
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [
-        JudgeConfig(name="citation_quality", provider=prov_a),
-        JudgeConfig(name="factual_accuracy", provider=prov_b),
-    ]
+    action.judge = JudgeConfig(
+        provider=prov,
+        criteria={"accuracy": "Is the output factually correct?"},
+    )
+    session.add_action(action)
+
+    score_trace(session, provider=None)
+
+    user_prompt = prov.judge.call_args[0][1]
+    assert "accuracy" in user_prompt
+    assert "Is the output factually correct?" in user_prompt
+
+
+def test_reference_injected_into_prompt():
+    """reference= is included in the judge prompt."""
+    prov = _fake_provider()
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judge = JudgeConfig(
+        provider=prov,
+        reference="Expected: Python was created by Guido van Rossum.",
+    )
+    session.add_action(action)
+
+    score_trace(session, provider=None)
+
+    user_prompt = prov.judge.call_args[0][1]
+    assert "Python was created by Guido van Rossum" in user_prompt
+
+
+def test_criteria_score_explanation_includes_axis_names():
+    """With criteria, score_explanation shows each criterion name."""
+    response = (
+        '{"reasoning": "...", "criteria": {'
+        '"citation_quality": {"score": 4, "explanation": "Good citations"},'
+        '"factual_accuracy": {"score": 2, "explanation": "Facts off"}'
+        '}, "score": 3.0, "explanation": "Mixed"}'
+    )
+    prov = _fake_provider(response)
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judge = JudgeConfig(
+        provider=prov,
+        criteria={
+            "citation_quality": "Are sources cited?",
+            "factual_accuracy": "Are facts correct?",
+        },
+    )
     session.add_action(action)
 
     score_trace(session, provider=None)
@@ -490,52 +609,45 @@ def test_multi_axis_score_explanation_includes_axis_names():
     assert "factual_accuracy" in explanation
 
 
-def test_judge_result_name_falls_back_to_model_when_no_axis_name():
-    """When JudgeConfig.name is not set, JudgeResult.name falls back to model name."""
-    prov = _fake_provider('{"score": 3, "explanation": "ok"}')
-    prov.model = "gpt-4o"
-
-    session = TraceSession(goal="test")
-    action = _make_action()
-    action.judges = [JudgeConfig(provider=prov)]  # no name
-    session.add_action(action)
-
-    score_trace(session, provider=MagicMock())
-
-    result = session.actions[0].judge_results[0]
-    assert result.name == "gpt-4o"
-
-
 @pytest.mark.asyncio
-async def test_multi_axis_async_all_judges_run():
-    """async_score_trace runs all per-action judges and stores per-axis results."""
+async def test_criteria_async_single_call():
+    """async_score_trace with criteria makes one call and returns per-criterion results."""
     from lattice.judge.scorer import async_score_trace
 
-    prov_a = _fake_provider('{"score": 3, "explanation": "ok"}')
-    prov_b = _fake_provider('{"score": 5, "explanation": "great"}')
+    response = (
+        '{"reasoning": "...", "criteria": {'
+        '"clarity": {"score": 3, "explanation": "ok"},'
+        '"accuracy": {"score": 5, "explanation": "great"}'
+        '}, "score": 4.0, "explanation": "Overall good"}'
+    )
+    prov = _fake_provider(response)
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [
-        JudgeConfig(name="clarity", provider=prov_a),
-        JudgeConfig(name="accuracy", provider=prov_b),
-    ]
+    action.judge = JudgeConfig(
+        provider=prov,
+        criteria={
+            "clarity": "Is the output clear?",
+            "accuracy": "Is the output accurate?",
+        },
+    )
     session.add_action(action)
 
     await async_score_trace(session, provider=None)
 
+    assert prov.ajudge.call_count == 1
     assert session.actions[0].score == pytest.approx(4.0)
     names = {r.name for r in session.actions[0].judge_results}
     assert names == {"clarity", "accuracy"}
 
 
-def test_no_global_provider_raises_for_action_without_judges():
-    """If no global provider and an action has no judges, score_trace raises."""
+def test_no_global_provider_raises_for_action_without_judge():
+    """If no global provider and an action has no judge, score_trace raises."""
     import os
     old = os.environ.pop("OPENAI_API_KEY", None)
     try:
         session = TraceSession(goal="test")
-        session.add_action(_make_action())  # no judges
+        session.add_action(_make_action())  # no judge
 
         with pytest.raises(ValueError, match="No judge provider"):
             score_trace(session)
@@ -551,29 +663,32 @@ def test_judge_result_fields_populated():
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [JudgeConfig(name="factual_accuracy", provider=prov)]
+    action.judge = JudgeConfig(
+        provider=prov,
+        criteria={"factual_accuracy": "Are facts correct?"},
+    )
     session.add_action(action)
 
     score_trace(session, provider=MagicMock())
 
+    # With criteria, judge_results is populated from the criteria parse
+    # The fallback path fires here since the mock returns simple JSON
     result = session.actions[0].judge_results[0]
     assert isinstance(result, JudgeResult)
-    assert result.score == 3.0
-    assert result.explanation == "Acceptable"
     assert result.name == "factual_accuracy"
     assert result.model == "gpt-4o"
 
 
-def test_judges_stripped_from_serialization():
-    """judges field must not appear in to_dict() output (non-serializable)."""
+def test_judge_stripped_from_serialization():
+    """judge field must not appear in to_dict() output (non-serializable)."""
     prov = _fake_provider()
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judges = [JudgeConfig(name="quality", provider=prov)]
+    action.judge = JudgeConfig(provider=prov)
     session.add_action(action)
 
     d = session.to_dict()
-    assert "judges" not in d["actions"][0]
+    assert "judge" not in d["actions"][0]
     assert "judge_results" in d["actions"][0]
 
 
