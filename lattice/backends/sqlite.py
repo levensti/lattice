@@ -15,6 +15,7 @@ from ..context import (
     TraceSession,
     TransitionRecord,
 )
+from .base import StorageBackend
 
 DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces.db"
 
@@ -36,7 +37,7 @@ ON traces (workflow_name)
 """
 
 
-class SQLiteBackend:
+class SQLiteBackend(StorageBackend):
     """Stores traces in a local SQLite database.
 
     Args:
