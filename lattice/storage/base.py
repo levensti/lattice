@@ -1,19 +1,19 @@
-"""StorageBackend protocol — the contract every backend must satisfy."""
+"""Store ABC — the contract every storage implementation must satisfy."""
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
 
 from ..context import TraceSession
 
 
-@runtime_checkable
-class Store(Protocol):
-    """Minimal interface for persisting and retrieving trace sessions.
+class Store(ABC):
+    """Abstract base class for trace persistence.
 
-    Implement both methods and pass an instance to :func:`lattice.configure`::
+    Subclass and implement both methods, then pass an instance to
+    :func:`lattice.configure`::
 
-        class MyBackend:
+        class MyStore(Store):
             def save_session(self, session: TraceSession) -> None:
                 ...
 
@@ -26,13 +26,14 @@ class Store(Protocol):
             ) -> list[TraceSession]:
                 ...
 
-        lattice.configure(backend=MyBackend())
+        lattice.configure(backend=MyStore())
     """
 
+    @abstractmethod
     def save_session(self, session: TraceSession) -> None:
         """Persist a completed trace session."""
-        ...
 
+    @abstractmethod
     def load_sessions(
         self,
         *,
@@ -47,4 +48,3 @@ class Store(Protocol):
             last: Return only the N most recent sessions.
             trace_id: Fetch a single session by ID.
         """
-        ...
