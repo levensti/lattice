@@ -5,6 +5,8 @@ from .context import (
     ActionRecord,
     GroupRecord,
     GroupType,
+    JudgeConfig,
+    JudgeResult,
     LoopContext,
     TraceSession,
     TransitionRecord,
@@ -21,8 +23,6 @@ from .decorators import action, instrument, trace_action
 from .judge.prompt_builder import (
     ActionPromptBuilder,
     JUDGE_SYSTEM_PROMPT,
-    RATING_SCALE,
-    RESPONSE_FORMAT,
     SessionPromptBuilder,
 )
 from .judge.providers import JudgeProvider
@@ -40,10 +40,10 @@ __all__ = [
     "GroupType",
     "ImpactType",
     "JUDGE_SYSTEM_PROMPT",
+    "JudgeConfig",
     "JudgeProvider",
+    "JudgeResult",
     "LoopContext",
-    "RATING_SCALE",
-    "RESPONSE_FORMAT",
     "SessionPromptBuilder",
     "TraceSession",
     "TransitionRecord",

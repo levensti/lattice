@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -11,6 +12,105 @@ from typing import Any, Literal
 GroupType = Literal["loop", "parallel"]
 
 logger = logging.getLogger("lattice")
+
+
+@dataclass
+class JudgeResult:
+    """Score produced by one judge for a single action.
+
+    When multiple judges are used on an action (multi-axis evaluation),
+    each axis produces one :class:`JudgeResult`. Access them via
+    ``action.judge_results``.
+    """
+
+    score: float
+    explanation: str
+    name: str  # axis / criterion name from JudgeConfig.name, or model name as fallback
+    model: str  # model that produced this score
+
+
+class JudgeConfig:
+    """Configuration for the judge that evaluates an action.
+
+    Attach to ``@action(judge=JudgeConfig(...))`` to configure how the action
+    is evaluated. The ``system_prompt`` is the rubric — define scoring
+    criteria, anchors, response format, and any reference material there.
+
+    Examples::
+
+        @action(
+            goal="Summarise the paper into 3 bullet points",
+            judge=JudgeConfig(
+                model="claude-opus-4-6",
+                system_prompt=\"\"\"You evaluate research summaries.
+
+Score 1: Wrong number of bullets or major factual errors.
+Score 2: 3 bullets but one is factually wrong.
+Score 3: 3 accurate bullets, one vague or incomplete.
+Score 4: 3 accurate bullets, minor wording issues.
+Score 5: 3 tight, distinct, fully accurate bullets.
+
+Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "..."}\"\"\",
+            ),
+        )
+        def summarise(paper): ...
+
+        # Full control — bring your own provider instance
+        @action(
+            goal="...",
+            judge=JudgeConfig(system_prompt="...", provider=my_judge),
+        )
+        def step(): ...
+
+    Args:
+        system_prompt: **Required.** The judge's rubric and instructions.
+            Define scoring criteria, per-score anchors, response format, and
+            any reference material here. This is the system turn sent to the
+            judge LLM on every call.
+        model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
+            Resolved via the same routing logic as :func:`score_trace`.
+        api_key: API key override. Falls back to the relevant environment
+            variable when omitted.
+        temperature: Sampling temperature passed to the judge LLM.
+        top_p: Top-p sampling parameter passed to the judge LLM.
+        action_prompt_builder: Custom callable that fully replaces the default
+            user prompt. Must accept ``name``, ``description``, ``goal``,
+            ``input_data``, ``output_data`` as keyword arguments and return a
+            string.
+        provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
+            instance. When set, ``model`` and ``api_key`` are ignored.
+    """
+
+    def __init__(
+        self,
+        *,
+        system_prompt: str,
+        model: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        action_prompt_builder: Callable | None = None,
+        provider: Any = None,
+    ) -> None:
+        self.system_prompt = system_prompt
+        self.model = model
+        self.api_key = api_key
+        self.temperature = temperature
+        self.top_p = top_p
+        self.action_prompt_builder = action_prompt_builder
+        self.provider = provider
+
+    def __repr__(self) -> str:
+        parts = ["system_prompt=..."]
+        if self.provider is not None:
+            parts.append(f"provider={self.provider!r}")
+        elif self.model:
+            parts.append(f"model={self.model!r}")
+        if self.temperature is not None:
+            parts.append(f"temperature={self.temperature}")
+        if self.top_p is not None:
+            parts.append(f"top_p={self.top_p}")
+        return f"JudgeConfig({', '.join(parts)})"
 
 
 @dataclass
@@ -34,6 +134,10 @@ class ActionRecord:
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None
+    # Per-action judge config — not persisted (stripped in to_dict)
+    judge: JudgeConfig | None = field(default=None, compare=False)
+    # Individual scores per criterion — persisted
+    judge_results: list[JudgeResult] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +192,10 @@ class TraceSession:
         """Serialize the session to a plain dict (suitable for JSON)."""
         d = asdict(self)
         d.pop("_action_counter", None)
+        # judge contains non-serializable objects (callables, provider instances);
+        # strip it — only judge_results (plain scores) are persisted.
+        for action_dict in d.get("actions", []):
+            action_dict.pop("judge", None)
         return d
 
 

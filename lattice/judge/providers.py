@@ -48,11 +48,15 @@ class OpenAIJudgeProvider:
         model: str = "gpt-4o",
         api_base: str = "https://api.openai.com/v1",
         timeout: float = _DEFAULT_TIMEOUT,
+        temperature: float = 0.1,
+        top_p: float | None = None,
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
         self.timeout = timeout
+        self.temperature = temperature
+        self.top_p = top_p
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -61,14 +65,17 @@ class OpenAIJudgeProvider:
         }
 
     def _payload(self, system_prompt: str, user_prompt: str) -> dict:
-        return {
+        payload: dict = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.1,
+            "temperature": self.temperature,
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        return payload
 
     def judge(self, system_prompt: str, user_prompt: str) -> str:
         with httpx.Client(timeout=self.timeout) as client:
@@ -99,11 +106,15 @@ class AnthropicJudgeProvider:
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
         timeout: float = _DEFAULT_TIMEOUT,
+        temperature: float = 0.1,
+        top_p: float | None = None,
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = "https://api.anthropic.com/v1"
         self.timeout = timeout
+        self.temperature = temperature
+        self.top_p = top_p
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -113,13 +124,16 @@ class AnthropicJudgeProvider:
         }
 
     def _payload(self, system_prompt: str, user_prompt: str) -> dict:
-        return {
+        payload: dict = {
             "model": self.model,
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}],
             "max_tokens": 512,
-            "temperature": 0.1,
+            "temperature": self.temperature,
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        return payload
 
     def judge(self, system_prompt: str, user_prompt: str) -> str:
         with httpx.Client(timeout=self.timeout) as client:
@@ -148,12 +162,14 @@ def create_provider(
     model: str,
     api_base: str = "https://api.openai.com/v1",
     timeout: float = _DEFAULT_TIMEOUT,
+    temperature: float = 0.1,
+    top_p: float | None = None,
 ) -> OpenAIJudgeProvider | AnthropicJudgeProvider:
     """Factory that returns the right provider instance."""
     if provider_name == "openai":
-        return OpenAIJudgeProvider(api_key, model, api_base, timeout=timeout)
+        return OpenAIJudgeProvider(api_key, model, api_base, timeout=timeout, temperature=temperature, top_p=top_p)
     if provider_name == "anthropic":
-        return AnthropicJudgeProvider(api_key, model, timeout=timeout)
+        return AnthropicJudgeProvider(api_key, model, timeout=timeout, temperature=temperature, top_p=top_p)
     raise ValueError(
         f"Unknown judge provider '{provider_name}'. Use 'openai' or 'anthropic'."
     )
@@ -187,6 +203,8 @@ def _route_model(model: str) -> tuple[str, str, str]:
 def resolve_provider(
     model: str,
     api_key: str | None = None,
+    temperature: float = 0.1,
+    top_p: float | None = None,
 ) -> OpenAIJudgeProvider | AnthropicJudgeProvider:
     """Create a provider by auto-detecting the backend from the model name.
 
@@ -210,4 +228,4 @@ def resolve_provider(
             f"Set the {env_var} environment variable or pass api_key=."
         )
 
-    return create_provider(provider_name, api_key, model, api_base)
+    return create_provider(provider_name, api_key, model, api_base, temperature=temperature, top_p=top_p)

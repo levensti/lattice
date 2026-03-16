@@ -13,7 +13,7 @@ pip install -e .
 ## Quick Start
 
 ```python
-from lattice import action, trace_session, score_trace, find_bottlenecks
+from lattice import action, trace_session, score_trace, find_bottlenecks, JudgeConfig
 
 @action(goal="Must return at least 3 factual claims with sources")
 def researcher(topic: str) -> str:
@@ -116,6 +116,63 @@ score_trace(session, model="google/gemini-2.0-flash")   # uses OPENROUTER_API_KE
 | Anything else                   | OpenRouter | `OPENROUTER_API_KEY` |
 
 You can also pass `api_key=` explicitly or a custom `provider=` instance. Use `async_score_trace` for concurrent scoring.
+
+### Custom rubric per action
+
+Attach a `JudgeConfig` to any `@action` to give that step its own rubric and model. The `system_prompt` is the rubric — define scoring criteria, per-score anchors, and any reference material there:
+
+```python
+from lattice import JudgeConfig
+
+@action(
+    goal="Summarise the paper into 3 bullet points",
+    judge=JudgeConfig(
+        model="claude-opus-4-6",
+        system_prompt="""You evaluate research summaries.
+
+Score 1: Wrong number of bullets or major factual errors.
+Score 2: 3 bullets but one is factually wrong.
+Score 3: 3 accurate bullets, one vague or incomplete.
+Score 4: 3 accurate bullets, minor wording issues.
+Score 5: 3 tight, distinct, fully accurate bullets.
+
+Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
+    ),
+)
+def summarise(paper): ...
+```
+
+When a `judge=` is set on an action, its `system_prompt` and model override the global judge for that step only. Actions without a `judge=` fall back to the global judge passed to `score_trace`.
+
+### Global system prompt
+
+Override the default rubric for all actions at once:
+
+```python
+score_trace(
+    session,
+    model="gpt-4o",
+    system_prompt="""You are a strict technical evaluator. Score 1-5.
+Respond: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
+)
+```
+
+### Background scoring (production)
+
+Score off the critical path so the judge never blocks your request handler:
+
+```python
+scorer = BackgroundScorer(model="gpt-4o")
+await scorer.start()
+
+async def handle_request(query):
+    with trace_session(goal="...") as session:
+        result = await run_agent(query)
+    scorer.submit(session)   # non-blocking
+    return result
+
+await scorer.cancel()        # at shutdown
+```
 
 ## Bottleneck Analysis
 
