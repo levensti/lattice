@@ -4,12 +4,10 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from .context import ActionRecord, TraceSession
+from .context import TraceSession
 
 ImpactType = Literal[
     "error",
-    "root_cause",
-    "downstream_effect",
     "loop_no_convergence",
     "weakest_branch",
 ]
@@ -19,7 +17,7 @@ logger = logging.getLogger("lattice")
 
 @dataclass
 class BottleneckResult:
-    """A single bottleneck finding from the analysis."""
+    """A structural issue found in the trace that scores alone don't surface."""
 
     action_name: str
     action_index: int
@@ -32,30 +30,32 @@ class BottleneckResult:
 
 
 def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
-    """Rank actions by quality issues, worst first.
+    """Find structural issues that scores alone don't surface.
 
-    Performs three layers of analysis:
+    Individual action scores are already on each :class:`ActionRecord` —
+    use those directly to see which steps performed poorly.  This function
+    adds the non-obvious patterns:
 
-    1. **Tree-aware individual actions** — errors surface first, then scored
-       actions classified as ``"root_cause"`` (no low-scoring ancestor) or
-       ``"downstream_effect"`` (a parent also scored below average, so the
-       problem likely originated upstream).
-    2. **Loop convergence** — flags repeated actions whose scores failed to
-       improve across iterations (impact ``"loop_no_convergence"``).
-    3. **Parallel branch imbalance** — flags the weakest branch when it
-       scores significantly below the group average
-       (impact ``"weakest_branch"``).
-
-    ``span_id`` and ``parent_span_id`` on each result let callers reconstruct
-    the call tree and trace a chain of downstream effects back to their
-    root cause.
+    1. **Errors** — actions that raised exceptions.
+    2. **Loop convergence** — repeated actions whose scores failed to improve
+       across iterations (impact ``"loop_no_convergence"``).
+    3. **Parallel branch imbalance** — the weakest branch when it scores
+       significantly below the group average (impact ``"weakest_branch"``).
     """
-    span_map: dict[str, ActionRecord] = {
-        a.span_id: a for a in session.actions if a.span_id
-    }
-
     results: list[BottleneckResult] = []
+    _collect_errors(session, results)
+    _analyze_loops(session, results)
+    _analyze_parallel(session, results)
+    results.sort(key=lambda r: (r.score, -r.latency_ms))
+    for r in results:
+        logger.info(
+            "Bottleneck: %s (score=%.1f, impact=%s, %.1fms)",
+            r.action_name, r.score, r.impact, r.latency_ms,
+        )
+    return results
 
+
+def _collect_errors(session: TraceSession, results: list[BottleneckResult]) -> None:
     for a in session.actions:
         if a.error is not None:
             results.append(BottleneckResult(
@@ -68,79 +68,14 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
                 span_id=a.span_id,
                 parent_span_id=a.parent_span_id,
             ))
-            continue
-
-        if a.score is None:
-            continue
-
-        impact = _classify_impact(a, span_map)
-        results.append(BottleneckResult(
-            action_name=a.name,
-            action_index=a.action_index,
-            score=a.score,
-            explanation=a.score_explanation or "",
-            impact=impact,
-            latency_ms=a.latency_ms,
-            span_id=a.span_id,
-            parent_span_id=a.parent_span_id,
-        ))
-
-    _analyze_loops(session, results)
-    _analyze_parallel(session, results)
-
-    results.sort(key=lambda r: (r.score, -r.latency_ms))
-    for r in results:
-        logger.info(
-            "Bottleneck: %s (score=%.1f, impact=%s, %.1fms)",
-            r.action_name, r.score, r.impact, r.latency_ms,
-        )
-    return results
 
 
-_BAD_SCORE_THRESHOLD = 3.0  # midpoint of the 1–5 rating scale
-
-
-def _classify_impact(
-    action: ActionRecord,
-    span_map: dict[str, ActionRecord],
-) -> ImpactType:
-    """Walk up the parent chain.
-
-    An action is a ``downstream_effect`` only when it is itself below the
-    bad-score threshold *and* at least one ancestor is also below that
-    threshold — meaning the problem likely originated upstream.  Actions
-    that score well are always ``root_cause`` regardless of their ancestry.
-    """
-    if action.score >= _BAD_SCORE_THRESHOLD:
-        return "root_cause"
-
-    parent_id = action.parent_span_id
-    while parent_id is not None:
-        parent = span_map.get(parent_id)
-        if parent is None:
-            break
-        if parent.score is not None and parent.score < _BAD_SCORE_THRESHOLD:
-            return "downstream_effect"
-        parent_id = parent.parent_span_id
-    return "root_cause"
-
-
-def _analyze_loops(
-    session: TraceSession,
-    results: list[BottleneckResult],
-) -> None:
-    """Detect loop convergence issues.
-
-    For each action name that repeats across iterations within a loop group,
-    check whether scores improved from first to last iteration.
-    """
-    loop_groups = [g for g in session.groups if g.group_type == "loop"]
-    for group in loop_groups:
+def _analyze_loops(session: TraceSession, results: list[BottleneckResult]) -> None:
+    """Flag repeated actions whose scores failed to improve across iterations."""
+    for group in (g for g in session.groups if g.group_type == "loop"):
         loop_steps = [
             s for s in session.actions
-            if s.group_id == group.group_id
-            and s.score is not None
-            and s.error is None
+            if s.group_id == group.group_id and s.score is not None and s.error is None
         ]
         if not loop_steps:
             continue
@@ -171,22 +106,12 @@ def _analyze_loops(
                 ))
 
 
-def _analyze_parallel(
-    session: TraceSession,
-    results: list[BottleneckResult],
-) -> None:
-    """Detect parallel branch imbalance.
-
-    Flags the weakest branch when its score is more than 1.0 below the
-    group average.
-    """
-    parallel_groups = [g for g in session.groups if g.group_type == "parallel"]
-    for group in parallel_groups:
+def _analyze_parallel(session: TraceSession, results: list[BottleneckResult]) -> None:
+    """Flag the weakest parallel branch when it falls significantly behind the group."""
+    for group in (g for g in session.groups if g.group_type == "parallel"):
         scored_steps = [
             s for s in session.actions
-            if s.group_id == group.group_id
-            and s.score is not None
-            and s.error is None
+            if s.group_id == group.group_id and s.score is not None and s.error is None
         ]
         if len(scored_steps) < 2:
             continue
