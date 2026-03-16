@@ -25,7 +25,7 @@ from .judge.prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     SessionPromptBuilder,
 )
-from .judge.providers import JudgeProvider
+from .judge.providers import AnthropicProvider, ApiType, InferenceProvider, OpenAIProvider, OpenRouterProvider
 from .judge.scorer import async_score_session, async_score_trace, BackgroundScorer, score_session, score_trace
 from .logging_utils import print_trace_summary
 from .storage import SQLiteStore, Store
@@ -41,7 +41,11 @@ __all__ = [
     "ImpactType",
     "JUDGE_SYSTEM_PROMPT",
     "JudgeConfig",
-    "JudgeProvider",
+    "AnthropicProvider",
+    "ApiType",
+    "InferenceProvider",
+    "OpenAIProvider",
+    "OpenRouterProvider",
     "JudgeResult",
     "LoopContext",
     "SessionPromptBuilder",

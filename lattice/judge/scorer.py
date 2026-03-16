@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from ..context import ActionRecord, JudgeConfig, TraceSession
 from .prompt_builder import (
@@ -13,7 +12,7 @@ from .prompt_builder import (
     build_judge_prompt,
     build_session_judge_prompt,
 )
-from .providers import JudgeProvider, create_provider, resolve_provider
+from .providers import InferenceProvider
 
 logger = logging.getLogger("lattice")
 
@@ -63,38 +62,15 @@ def _build_prompt_for_action(
     )
 
 
-def _provider_from_config(config: JudgeConfig, fallback: JudgeProvider | None) -> JudgeProvider:
-    """Resolve a JudgeProvider from a JudgeConfig, falling back to *fallback*."""
-    if config.provider is not None:
-        return config.provider
-    if config.model is not None:
-        return resolve_provider(
-            config.model,
-            config.api_key,
-            temperature=config.temperature if config.temperature is not None else 0.1,
-            top_p=config.top_p,
-        )
-    if fallback is not None:
-        return fallback
-    raise ValueError(
-        "JudgeConfig has no model or provider, and no global fallback provider is configured."
-    )
-
-
 def _score_single_action(
     action: ActionRecord,
-    provider: JudgeProvider | None,
+    provider: InferenceProvider,
     system_prompt: str,
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
     config = action.judge
-    prov = _provider_from_config(config, provider) if config else provider
-    if prov is None:
-        raise ValueError(
-            f"No judge provider configured for action '{action.name}'. "
-            "Pass provider=, model=, set OPENAI_API_KEY, or attach judge= to the action."
-        )
+    prov = config.provider if config else provider
     sys_prompt = config.system_prompt if config else system_prompt
     builder = (config.action_prompt_builder if config else None) or action_prompt_builder
     raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder))
@@ -104,18 +80,13 @@ def _score_single_action(
 
 async def _async_score_single_action(
     action: ActionRecord,
-    provider: JudgeProvider | None,
+    provider: InferenceProvider,
     system_prompt: str,
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
     config = action.judge
-    prov = _provider_from_config(config, provider) if config else provider
-    if prov is None:
-        raise ValueError(
-            f"No judge provider configured for action '{action.name}'. "
-            "Pass provider=, model=, set OPENAI_API_KEY, or attach judge= to the action."
-        )
+    prov = config.provider if config else provider
     sys_prompt = config.system_prompt if config else system_prompt
     builder = (config.action_prompt_builder if config else None) or action_prompt_builder
     raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder))
@@ -123,71 +94,34 @@ async def _async_score_single_action(
     logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
 
-def _get_provider(
-    provider: JudgeProvider | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
-) -> JudgeProvider | None:
-    """Resolve the global fallback provider, or return None if unconfigured.
-
-    Returns None when no global provider is set — this is fine as long as
-    every action has per-action ``judges`` configured.
-    """
-    if provider is not None:
-        return provider
-    if model is not None:
-        return resolve_provider(model, api_key)
-    # Fall back to environment-based default
-    env_key = os.environ.get("OPENAI_API_KEY")
-    if env_key:
-        return create_provider("openai", env_key, "gpt-4o", "https://api.openai.com/v1")
-    return None
-
-
 def score_trace(
     session: TraceSession,
     *,
-    provider: JudgeProvider | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
+    provider: InferenceProvider,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> list[ActionRecord]:
     """Score every action in the session synchronously. Updates actions in place.
 
-    The global judge LLM is resolved in order of priority:
-
-    1. Pass an explicit *provider* instance.
-    2. Pass *model* (and optionally *api_key*) — the provider is resolved
-       automatically from the model name.
-    3. Fall back to ``OPENAI_API_KEY`` environment variable with ``gpt-4o``.
-
-    Actions decorated with ``judge=JudgeConfig(...)`` use that config's
-    ``system_prompt`` and provider instead of the global ones.
-
-    The global provider is optional when every action has a per-action judge.
-
-    Prompt customization:
-
-    - *system_prompt*: Override the default system prompt (used as fallback
-      for actions that don't set ``JudgeConfig.system_prompt``).
-    - *action_prompt_builder*: Callable that builds the user prompt for each
-      action. Must accept keyword arguments ``name``, ``description``, ``goal``,
-      ``input_data``, ``output_data`` and return a string.
+    Args:
+        provider: **Required.** :class:`InferenceProvider` used for actions
+            that don't have a per-action ``JudgeConfig.provider`` set.
+        system_prompt: Override the default system prompt (used as fallback
+            for actions that don't set ``JudgeConfig.system_prompt``).
+        action_prompt_builder: Callable that builds the user prompt for each
+            action. Must accept keyword arguments ``name``, ``description``,
+            ``goal``, ``input_data``, ``output_data`` and return a string.
     """
-    prov = _get_provider(provider, model, api_key)
     for a in session.actions:
         if a.error is None:
-            _score_single_action(a, prov, system_prompt, action_prompt_builder)
+            _score_single_action(a, provider, system_prompt, action_prompt_builder)
     return session.actions
 
 
 async def async_score_trace(
     session: TraceSession,
     *,
-    provider: JudgeProvider | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
+    provider: InferenceProvider,
     max_concurrency: int = 5,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
     action_prompt_builder: ActionPromptBuilder | None = None,
@@ -196,13 +130,12 @@ async def async_score_trace(
 
     See :func:`score_trace` for how the judge LLM and prompts are configured.
     """
-    prov = _get_provider(provider, model, api_key)
     sem = asyncio.Semaphore(max_concurrency)
     scorable = [a for a in session.actions if a.error is None]
 
     async def _bounded(action: ActionRecord) -> None:
         async with sem:
-            await _async_score_single_action(action, prov, system_prompt, action_prompt_builder)
+            await _async_score_single_action(action, provider, system_prompt, action_prompt_builder)
 
     await asyncio.gather(*[_bounded(a) for a in scorable])
     return session.actions
@@ -211,9 +144,7 @@ async def async_score_trace(
 def score_session(
     session: TraceSession,
     *,
-    provider: JudgeProvider | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
+    provider: InferenceProvider,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
     session_prompt_builder: SessionPromptBuilder | None = None,
 ) -> tuple[float, str]:
@@ -222,14 +153,12 @@ def score_session(
     Looks at the last action's output and evaluates it against ``session.goal``.
     Returns ``(score, explanation)`` and stores them on the session.
 
-    See :func:`score_trace` for how the judge LLM is resolved.
-
-    Prompt customization:
-
-    - *system_prompt*: Override the system prompt sent to the judge LLM.
-    - *session_prompt_builder*: Callable that builds the user prompt.
-      Must accept keyword arguments ``goal``, ``final_output``,
-      ``workflow_name`` and return a string.
+    Args:
+        provider: **Required.** :class:`InferenceProvider` for the judge LLM.
+        system_prompt: Override the system prompt sent to the judge LLM.
+        session_prompt_builder: Callable that builds the user prompt.
+            Must accept keyword arguments ``goal``, ``final_output``,
+            ``workflow_name`` and return a string.
 
     Raises:
         ValueError: If the session has no goal or no actions.
@@ -239,7 +168,6 @@ def score_session(
     if not session.actions:
         raise ValueError("Session has no actions — nothing to judge.")
 
-    prov = _get_provider(provider, model, api_key)
     last_action = session.actions[-1]
 
     builder = session_prompt_builder or build_session_judge_prompt
@@ -249,7 +177,7 @@ def score_session(
         workflow_name=session.workflow_name,
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)
-    raw = prov.judge(system_prompt, prompt)
+    raw = provider.judge(system_prompt, prompt)
     score, explanation = _parse_judge_response(raw)
     session.session_score = score
     session.session_score_explanation = explanation
@@ -273,7 +201,7 @@ class BackgroundScorer:
     immediately (un-scored sessions stay in SQLite for offline scoring)::
 
         # ── app startup (once) ──────────────────────────────
-        scorer = BackgroundScorer(model="gpt-4o")
+        scorer = BackgroundScorer(provider=OpenAIProvider("gpt-4o"))
         await scorer.start()
 
         # ── per-request hot path (many times) ───────────────
@@ -288,14 +216,13 @@ class BackgroundScorer:
 
     Or as an async context manager scoped to the application lifetime::
 
-        async with BackgroundScorer(model="gpt-4o") as scorer:
+        async with BackgroundScorer(provider=OpenAIProvider("gpt-4o")) as scorer:
             await serve_forever(scorer)   # submit() inside each request
         # cancel() called automatically on exit — does not block
 
     Args:
-        provider: Explicit :class:`JudgeProvider` instance.
-        model: Model name — provider is resolved automatically.
-        api_key: API key for the judge provider.
+        provider: **Required.** :class:`InferenceProvider` instance for the
+            judge LLM.
         max_concurrency: Maximum parallel judge calls per session.
         system_prompt: Override the judge system prompt.
         action_prompt_builder: Custom prompt builder for each action.
@@ -304,16 +231,12 @@ class BackgroundScorer:
     def __init__(
         self,
         *,
-        provider: JudgeProvider | None = None,
-        model: str | None = None,
-        api_key: str | None = None,
+        provider: InferenceProvider,
         max_concurrency: int = 5,
         system_prompt: str = JUDGE_SYSTEM_PROMPT,
         action_prompt_builder: ActionPromptBuilder | None = None,
     ) -> None:
         self._provider = provider
-        self._model = model
-        self._api_key = api_key
         self._max_concurrency = max_concurrency
         self._system_prompt = system_prompt
         self._action_prompt_builder = action_prompt_builder
@@ -365,7 +288,6 @@ class BackgroundScorer:
         await self.cancel()
 
     async def _worker(self) -> None:
-        prov = _get_provider(self._provider, self._model, self._api_key)
         while True:
             session = await self._queue.get()
             try:
@@ -375,7 +297,7 @@ class BackgroundScorer:
                 async def _bounded(action: ActionRecord) -> None:
                     async with sem:
                         await _async_score_single_action(
-                            action, prov, self._system_prompt, self._action_prompt_builder
+                            action, self._provider, self._system_prompt, self._action_prompt_builder
                         )
 
                 await asyncio.gather(*[_bounded(a) for a in scorable])
@@ -401,9 +323,7 @@ class BackgroundScorer:
 async def async_score_session(
     session: TraceSession,
     *,
-    provider: JudgeProvider | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
+    provider: InferenceProvider,
     system_prompt: str = JUDGE_SYSTEM_PROMPT,
     session_prompt_builder: SessionPromptBuilder | None = None,
 ) -> tuple[float, str]:
@@ -416,7 +336,6 @@ async def async_score_session(
     if not session.actions:
         raise ValueError("Session has no actions — nothing to judge.")
 
-    prov = _get_provider(provider, model, api_key)
     last_action = session.actions[-1]
 
     builder = session_prompt_builder or build_session_judge_prompt
@@ -426,7 +345,7 @@ async def async_score_session(
         workflow_name=session.workflow_name,
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)
-    raw = await prov.ajudge(system_prompt, prompt)
+    raw = await provider.ajudge(system_prompt, prompt)
     score, explanation = _parse_judge_response(raw)
     session.session_score = score
     session.session_score_explanation = explanation

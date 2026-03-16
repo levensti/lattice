@@ -9,7 +9,7 @@ from lattice.judge.prompt_builder import (
     build_judge_prompt,
     build_session_judge_prompt,
 )
-from lattice.judge.providers import AnthropicJudgeProvider, OpenAIJudgeProvider
+from lattice.judge.providers import AnthropicProvider, OpenAIProvider
 from lattice.judge.scorer import _parse_judge_response, BackgroundScorer, score_session, score_trace
 
 _RUBRIC = "Score 1-5. Respond: {\"reasoning\": \"...\", \"score\": <1-5>, \"explanation\": \"...\"}"
@@ -349,21 +349,19 @@ async def test_background_scorer_worker_error_does_not_crash_worker():
 # ── JudgeConfig / per-action judge ────────────────────────────────────
 
 
-def test_judge_config_system_prompt_required():
+def test_judge_config_requires_system_prompt_and_provider():
     with pytest.raises(TypeError):
-        JudgeConfig(model="gpt-4o")  # missing system_prompt
+        JudgeConfig()  # missing both
+
+    with pytest.raises(TypeError):
+        JudgeConfig(system_prompt="...")  # missing provider
+
+    with pytest.raises(TypeError):
+        JudgeConfig(provider=_fake_provider())  # missing system_prompt
 
 
 def test_judge_config_repr():
-    jc = JudgeConfig(system_prompt="Score strictly.", model="gpt-4o", temperature=0.0)
-    assert "system_prompt=..." in repr(jc)
-    assert "gpt-4o" in repr(jc)
-    assert "temperature=0.0" in repr(jc)
-
-
-def test_judge_config_repr_with_provider():
-    prov = MagicMock()
-    jc = JudgeConfig(system_prompt="...", provider=prov)
+    jc = JudgeConfig(system_prompt="Score strictly.", provider=_fake_provider())
     assert "system_prompt=..." in repr(jc)
     assert "provider=" in repr(jc)
 
@@ -427,31 +425,18 @@ def test_per_action_judge_custom_prompt_builder():
 async def test_per_action_judge_async():
     from lattice.judge.scorer import async_score_trace
 
-    prov = _fake_provider('{"reasoning": "...", "score": 5, "explanation": "great"}')
+    per_action_prov = _fake_provider('{"reasoning": "...", "score": 5, "explanation": "great"}')
+    global_prov = _fake_provider()
 
     session = TraceSession(goal="test")
     action = _make_action()
-    action.judge = JudgeConfig(system_prompt=_RUBRIC, provider=prov)
+    action.judge = JudgeConfig(system_prompt=_RUBRIC, provider=per_action_prov)
     session.add_action(action)
 
-    await async_score_trace(session, provider=None)
+    await async_score_trace(session, provider=global_prov)
 
-    assert prov.ajudge.call_count == 1
+    assert per_action_prov.ajudge.call_count == 1
     assert session.actions[0].score == 5.0
-
-
-def test_no_global_provider_raises_for_action_without_judge():
-    import os
-    old = os.environ.pop("OPENAI_API_KEY", None)
-    try:
-        session = TraceSession(goal="test")
-        session.add_action(_make_action())
-
-        with pytest.raises(ValueError, match="No judge provider"):
-            score_trace(session)
-    finally:
-        if old is not None:
-            os.environ["OPENAI_API_KEY"] = old
 
 
 def test_judge_stripped_from_serialization():
@@ -465,32 +450,3 @@ def test_judge_stripped_from_serialization():
     d = session.to_dict()
     assert "judge" not in d["actions"][0]
     assert "judge_results" in d["actions"][0]
-
-
-# ── Provider config ───────────────────────────────────────────────────
-
-
-def test_openai_provider_temperature_and_top_p():
-    prov = OpenAIJudgeProvider("key", "gpt-4o", temperature=0.5, top_p=0.9)
-    payload = prov._payload("sys", "user")
-    assert payload["temperature"] == 0.5
-    assert payload["top_p"] == 0.9
-
-
-def test_openai_provider_top_p_omitted_when_none():
-    prov = OpenAIJudgeProvider("key", "gpt-4o", temperature=0.1)
-    payload = prov._payload("sys", "user")
-    assert "top_p" not in payload
-
-
-def test_anthropic_provider_temperature_and_top_p():
-    prov = AnthropicJudgeProvider("key", temperature=0.3, top_p=0.8)
-    payload = prov._payload("sys", "user")
-    assert payload["temperature"] == 0.3
-    assert payload["top_p"] == 0.8
-
-
-def test_anthropic_provider_top_p_omitted_when_none():
-    prov = AnthropicJudgeProvider("key", temperature=0.1)
-    payload = prov._payload("sys", "user")
-    assert "top_p" not in payload
