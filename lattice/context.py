@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -11,6 +12,94 @@ from typing import Any, Literal
 GroupType = Literal["loop", "parallel"]
 
 logger = logging.getLogger("lattice")
+
+
+@dataclass
+class JudgeResult:
+    """Score produced by one judge for a single action."""
+
+    score: float
+    explanation: str
+    model: str
+
+
+class JudgeConfig:
+    """Configuration for a single judge LLM.
+
+    Pass a list of these to ``@action(judges=[...])`` to override the global
+    judge for that specific action and/or run an ensemble of judges.
+
+    Examples::
+
+        # Single judge with custom settings
+        @action(
+            goal="Must cite sources",
+            judges=[JudgeConfig(model="gpt-4o", temperature=0.0)],
+        )
+        def research(topic): ...
+
+        # Ensemble — action scored by two models, score is their mean
+        @action(
+            goal="Must be factually accurate",
+            judges=[
+                JudgeConfig(model="gpt-4o", system_prompt="You are a strict fact-checker."),
+                JudgeConfig(model="claude-opus-4-6"),
+            ],
+        )
+        def fact_check(claim): ...
+
+        # Full control — bring your own provider instance
+        @action(goal="...", judges=[JudgeConfig(provider=my_custom_provider)])
+        def step(): ...
+
+    Args:
+        model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
+            Resolved via the same routing logic as :func:`score_trace`.
+        api_key: API key override. Falls back to the relevant environment
+            variable when omitted.
+        system_prompt: Override the judge system prompt for this action only.
+        temperature: Sampling temperature passed to the judge LLM.
+        top_p: Top-p sampling parameter passed to the judge LLM.
+        action_prompt_builder: Custom callable that builds the user prompt.
+            Must accept ``name``, ``description``, ``goal``, ``input_data``,
+            ``output_data`` as keyword arguments and return a string.
+        provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
+            instance. When set, all other fields except *system_prompt* and
+            *action_prompt_builder* are ignored.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        action_prompt_builder: Callable | None = None,
+        provider: Any = None,
+    ) -> None:
+        self.model = model
+        self.api_key = api_key
+        self.system_prompt = system_prompt
+        self.temperature = temperature
+        self.top_p = top_p
+        self.action_prompt_builder = action_prompt_builder
+        self.provider = provider
+
+    def __repr__(self) -> str:
+        parts = []
+        if self.provider is not None:
+            parts.append(f"provider={self.provider!r}")
+        elif self.model:
+            parts.append(f"model={self.model!r}")
+        if self.system_prompt:
+            parts.append("system_prompt=...")
+        if self.temperature is not None:
+            parts.append(f"temperature={self.temperature}")
+        if self.top_p is not None:
+            parts.append(f"top_p={self.top_p}")
+        return f"JudgeConfig({', '.join(parts)})"
 
 
 @dataclass
@@ -34,6 +123,10 @@ class ActionRecord:
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None
+    # Per-action judge configs — not persisted (stripped in to_dict)
+    judges: list[JudgeConfig] = field(default_factory=list, compare=False)
+    # Individual scores from each judge — persisted
+    judge_results: list[JudgeResult] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +181,10 @@ class TraceSession:
         """Serialize the session to a plain dict (suitable for JSON)."""
         d = asdict(self)
         d.pop("_action_counter", None)
+        # judges contains non-serializable objects (callables, provider instances);
+        # strip it — only judge_results (plain scores) are persisted.
+        for action_dict in d.get("actions", []):
+            action_dict.pop("judges", None)
         return d
 
 

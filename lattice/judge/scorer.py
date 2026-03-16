@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from ..context import ActionRecord, TraceSession
+from ..context import ActionRecord, JudgeConfig, JudgeResult, TraceSession
 from .prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     SessionPromptBuilder,
@@ -63,27 +63,92 @@ def _build_prompt_for_action(
     )
 
 
+def _provider_from_config(config: JudgeConfig, fallback: JudgeProvider | None) -> JudgeProvider:
+    """Resolve a JudgeProvider from a JudgeConfig, falling back to *fallback*."""
+    if config.provider is not None:
+        return config.provider
+    if config.model is not None:
+        return resolve_provider(
+            config.model,
+            config.api_key,
+            temperature=config.temperature if config.temperature is not None else 0.1,
+            top_p=config.top_p,
+        )
+    if fallback is not None:
+        return fallback
+    raise ValueError(
+        "JudgeConfig has no model or provider, and no global fallback provider is configured."
+    )
+
+
+def _apply_judge_results(action: ActionRecord, results: list[JudgeResult]) -> None:
+    """Store *results* on *action*, setting the aggregate score/explanation."""
+    action.judge_results = results
+    action.score = sum(r.score for r in results) / len(results)
+    if len(results) == 1:
+        action.score_explanation = results[0].explanation
+    else:
+        action.score_explanation = "; ".join(
+            f"{r.model} ({r.score:.1f}/5): {r.explanation}" for r in results
+        )
+
+
 def _score_single_action(
     action: ActionRecord,
-    provider: JudgeProvider,
+    provider: JudgeProvider | None,
     system_prompt: str,
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
-    raw = provider.judge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
-    action.score, action.score_explanation = _parse_judge_response(raw)
+    if action.judges:
+        results = []
+        for config in action.judges:
+            prov = _provider_from_config(config, provider)
+            sys_prompt = config.system_prompt or system_prompt
+            builder = config.action_prompt_builder or action_prompt_builder
+            raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder))
+            score, explanation = _parse_judge_response(raw)
+            model_name = getattr(prov, "model", "custom")
+            results.append(JudgeResult(score=score, explanation=explanation, model=model_name))
+        _apply_judge_results(action, results)
+    else:
+        if provider is None:
+            raise ValueError(
+                f"No judge provider configured for action '{action.name}'. "
+                "Pass provider=, model=, set OPENAI_API_KEY, or attach judges= to the action."
+            )
+        raw = provider.judge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
+        action.score, action.score_explanation = _parse_judge_response(raw)
     logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
 
 async def _async_score_single_action(
     action: ActionRecord,
-    provider: JudgeProvider,
+    provider: JudgeProvider | None,
     system_prompt: str,
     action_prompt_builder: ActionPromptBuilder | None = None,
 ) -> None:
     logger.info("Scoring action: %s", action.name)
-    raw = await provider.ajudge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
-    action.score, action.score_explanation = _parse_judge_response(raw)
+    if action.judges:
+        async def _run_one(config: JudgeConfig) -> JudgeResult:
+            prov = _provider_from_config(config, provider)
+            sys_prompt = config.system_prompt or system_prompt
+            builder = config.action_prompt_builder or action_prompt_builder
+            raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder))
+            score, explanation = _parse_judge_response(raw)
+            model_name = getattr(prov, "model", "custom")
+            return JudgeResult(score=score, explanation=explanation, model=model_name)
+
+        results = await asyncio.gather(*[_run_one(c) for c in action.judges])
+        _apply_judge_results(action, list(results))
+    else:
+        if provider is None:
+            raise ValueError(
+                f"No judge provider configured for action '{action.name}'. "
+                "Pass provider=, model=, set OPENAI_API_KEY, or attach judges= to the action."
+            )
+        raw = await provider.ajudge(system_prompt, _build_prompt_for_action(action, action_prompt_builder))
+        action.score, action.score_explanation = _parse_judge_response(raw)
     logger.info("Scored action: %s → %.1f/5", action.name, action.score)
 
 
@@ -91,19 +156,21 @@ def _get_provider(
     provider: JudgeProvider | None = None,
     model: str | None = None,
     api_key: str | None = None,
-) -> JudgeProvider:
+) -> JudgeProvider | None:
+    """Resolve the global fallback provider, or return None if unconfigured.
+
+    Returns None when no global provider is set — this is fine as long as
+    every action has per-action ``judges`` configured.
+    """
     if provider is not None:
         return provider
     if model is not None:
         return resolve_provider(model, api_key)
     # Fall back to environment-based default
     env_key = os.environ.get("OPENAI_API_KEY")
-    if not env_key:
-        raise ValueError(
-            "No judge provider configured. Pass provider=, model=, "
-            "or set OPENAI_API_KEY."
-        )
-    return create_provider("openai", env_key, "gpt-4o", "https://api.openai.com/v1")
+    if env_key:
+        return create_provider("openai", env_key, "gpt-4o", "https://api.openai.com/v1")
+    return None
 
 
 def score_trace(
@@ -117,18 +184,27 @@ def score_trace(
 ) -> list[ActionRecord]:
     """Score every action in the session synchronously. Updates actions in place.
 
-    The judge LLM can be specified in three ways (highest priority first):
+    The global judge LLM is resolved in order of priority:
 
     1. Pass an explicit *provider* instance.
     2. Pass *model* (and optionally *api_key*) — the provider is resolved
        automatically from the model name.
     3. Fall back to ``OPENAI_API_KEY`` environment variable with ``gpt-4o``.
 
+    Actions decorated with ``judges=[JudgeConfig(...)]`` use their own judge
+    config instead of the global one. When an action has multiple
+    :class:`~lattice.context.JudgeConfig` entries, all judges run and the
+    action's ``score`` is set to their mean; individual results are available
+    on ``action.judge_results``.
+
+    The global provider is optional when every action has per-action judges.
+
     Prompt customization:
 
-    - *system_prompt*: Override the system prompt sent to the judge LLM.
-    - *action_prompt_builder*: Callable that builds the user prompt for each action.
-      Must accept keyword arguments ``name``, ``description``, ``goal``,
+    - *system_prompt*: Override the default system prompt (used as fallback
+      for actions that don't set ``JudgeConfig.system_prompt``).
+    - *action_prompt_builder*: Callable that builds the user prompt for each
+      action. Must accept keyword arguments ``name``, ``description``, ``goal``,
       ``input_data``, ``output_data`` and return a string.
     """
     prov = _get_provider(provider, model, api_key)

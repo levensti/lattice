@@ -3,12 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from lattice.context import ActionRecord, TraceSession
+from lattice.context import ActionRecord, JudgeConfig, JudgeResult, TraceSession
 from lattice.judge.prompt_builder import (
     JUDGE_SYSTEM_PROMPT,
     build_judge_prompt,
     build_session_judge_prompt,
 )
+from lattice.judge.providers import AnthropicJudgeProvider, OpenAIJudgeProvider
 from lattice.judge.scorer import _parse_judge_response, BackgroundScorer, score_session, score_trace
 
 
@@ -356,3 +357,227 @@ async def test_background_scorer_worker_error_does_not_crash_worker():
     await scorer.cancel()
 
     assert good_session.actions[0].score == 5.0
+
+
+# ── JudgeConfig / per-action judges ───────────────────────────────────
+
+
+def test_judge_config_repr_with_model():
+    jc = JudgeConfig(model="gpt-4o", temperature=0.0)
+    assert "gpt-4o" in repr(jc)
+    assert "temperature=0.0" in repr(jc)
+
+
+def test_judge_config_repr_with_provider():
+    prov = MagicMock()
+    jc = JudgeConfig(provider=prov)
+    assert "provider=" in repr(jc)
+
+
+def test_per_action_single_judge_config_used():
+    """A JudgeConfig on an action uses that config's provider, not the global one."""
+    per_action_prov = _fake_provider('{"score": 5, "explanation": "Perfect"}')
+    global_prov = _fake_provider('{"score": 1, "explanation": "Bad"}')
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=per_action_prov)]
+    session.add_action(action)
+
+    score_trace(session, provider=global_prov)
+
+    # global provider should NOT have been called
+    global_prov.judge.assert_not_called()
+    per_action_prov.judge.assert_called_once()
+    assert session.actions[0].score == 5.0
+    assert len(session.actions[0].judge_results) == 1
+    assert session.actions[0].judge_results[0].score == 5.0
+
+
+def test_per_action_single_judge_custom_system_prompt():
+    """JudgeConfig.system_prompt overrides the global system_prompt for that action."""
+    prov = _fake_provider()
+    jc = JudgeConfig(provider=prov, system_prompt="Be extra strict.")
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [jc]
+    session.add_action(action)
+
+    score_trace(session, provider=MagicMock())
+
+    system_arg = prov.judge.call_args[0][0]
+    assert system_arg == "Be extra strict."
+
+
+def test_per_action_judge_falls_back_to_global_system_prompt():
+    """When JudgeConfig.system_prompt is None, fall back to global system_prompt."""
+    prov = _fake_provider()
+    jc = JudgeConfig(provider=prov)  # no system_prompt
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [jc]
+    session.add_action(action)
+
+    score_trace(session, provider=MagicMock(), system_prompt="Global prompt.")
+
+    system_arg = prov.judge.call_args[0][0]
+    assert system_arg == "Global prompt."
+
+
+def test_per_action_judge_custom_prompt_builder():
+    """JudgeConfig.action_prompt_builder overrides global action_prompt_builder."""
+    prov = _fake_provider()
+
+    def custom_builder(*, name, description, goal, input_data, output_data):
+        return f"PER-ACTION: {name}"
+
+    jc = JudgeConfig(provider=prov, action_prompt_builder=custom_builder)
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [jc]
+    session.add_action(action)
+
+    score_trace(session, provider=MagicMock())
+
+    user_arg = prov.judge.call_args[0][1]
+    assert user_arg == "PER-ACTION: researcher"
+
+
+def test_ensemble_two_judges_averages_scores():
+    """Multiple judges: score is the mean; judge_results contains one entry per judge."""
+    prov_a = _fake_provider('{"score": 4, "explanation": "Good"}')
+    prov_b = _fake_provider('{"score": 2, "explanation": "Weak"}')
+    prov_a.model = "model-a"
+    prov_b.model = "model-b"
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=prov_a), JudgeConfig(provider=prov_b)]
+    session.add_action(action)
+
+    score_trace(session, provider=None)
+
+    assert session.actions[0].score == pytest.approx(3.0)
+    assert len(session.actions[0].judge_results) == 2
+    scores = {r.model: r.score for r in session.actions[0].judge_results}
+    assert scores["model-a"] == 4.0
+    assert scores["model-b"] == 2.0
+
+
+def test_ensemble_score_explanation_includes_all_models():
+    """With multiple judges, score_explanation names each model's contribution."""
+    prov_a = _fake_provider('{"score": 4, "explanation": "Mostly good"}')
+    prov_b = _fake_provider('{"score": 2, "explanation": "Needs work"}')
+    prov_a.model = "alpha"
+    prov_b.model = "beta"
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=prov_a), JudgeConfig(provider=prov_b)]
+    session.add_action(action)
+
+    score_trace(session, provider=None)
+
+    explanation = session.actions[0].score_explanation
+    assert "alpha" in explanation
+    assert "beta" in explanation
+
+
+@pytest.mark.asyncio
+async def test_ensemble_async_all_judges_run_concurrently():
+    """async_score_trace runs all per-action judges and stores results."""
+    from lattice.judge.scorer import async_score_trace
+
+    prov_a = _fake_provider('{"score": 3, "explanation": "ok"}')
+    prov_b = _fake_provider('{"score": 5, "explanation": "great"}')
+    prov_a.model = "a"
+    prov_b.model = "b"
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=prov_a), JudgeConfig(provider=prov_b)]
+    session.add_action(action)
+
+    await async_score_trace(session, provider=None)
+
+    assert session.actions[0].score == pytest.approx(4.0)
+    assert len(session.actions[0].judge_results) == 2
+
+
+def test_no_global_provider_raises_for_action_without_judges():
+    """If no global provider and an action has no judges, score_trace raises."""
+    import os
+    old = os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        session = TraceSession(goal="test")
+        session.add_action(_make_action())  # no judges
+
+        with pytest.raises(ValueError, match="No judge provider"):
+            score_trace(session)
+    finally:
+        if old is not None:
+            os.environ["OPENAI_API_KEY"] = old
+
+
+def test_judge_result_stored_on_action_record():
+    """JudgeResult fields are correctly populated."""
+    prov = _fake_provider('{"score": 3, "explanation": "Acceptable"}')
+    prov.model = "test-model"
+
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=prov)]
+    session.add_action(action)
+
+    score_trace(session, provider=MagicMock())
+
+    result = session.actions[0].judge_results[0]
+    assert isinstance(result, JudgeResult)
+    assert result.score == 3.0
+    assert result.explanation == "Acceptable"
+    assert result.model == "test-model"
+
+
+def test_judges_stripped_from_serialization():
+    """judges field must not appear in to_dict() output (non-serializable)."""
+    prov = _fake_provider()
+    session = TraceSession(goal="test")
+    action = _make_action()
+    action.judges = [JudgeConfig(provider=prov)]
+    session.add_action(action)
+
+    d = session.to_dict()
+    assert "judges" not in d["actions"][0]
+    # judge_results should still be present
+    assert "judge_results" in d["actions"][0]
+
+
+def test_openai_provider_temperature_and_top_p():
+    """temperature and top_p are included in the OpenAI request payload."""
+    prov = OpenAIJudgeProvider("key", "gpt-4o", temperature=0.5, top_p=0.9)
+    payload = prov._payload("sys", "user")
+    assert payload["temperature"] == 0.5
+    assert payload["top_p"] == 0.9
+
+
+def test_openai_provider_top_p_omitted_when_none():
+    prov = OpenAIJudgeProvider("key", "gpt-4o", temperature=0.1)
+    payload = prov._payload("sys", "user")
+    assert "top_p" not in payload
+
+
+def test_anthropic_provider_temperature_and_top_p():
+    """temperature and top_p are included in the Anthropic request payload."""
+    prov = AnthropicJudgeProvider("key", temperature=0.3, top_p=0.8)
+    payload = prov._payload("sys", "user")
+    assert payload["temperature"] == 0.3
+    assert payload["top_p"] == 0.8
+
+
+def test_anthropic_provider_top_p_omitted_when_none():
+    prov = AnthropicJudgeProvider("key", temperature=0.1)
+    payload = prov._payload("sys", "user")
+    assert "top_p" not in payload

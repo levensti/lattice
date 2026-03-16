@@ -11,6 +11,7 @@ from typing import Any, Callable, Sequence
 
 from .context import (
     ActionRecord,
+    JudgeConfig,
     TransitionRecord,
     _current_activation_reason,
     _current_group_id,
@@ -58,7 +59,7 @@ def _record_action(
     session, *, span_id, name, description, goal,
     input_data, output_data, action_index, latency_ms, parent_span_id,
     tags, role=None, group_id=None, iteration=None,
-    activation_reason=None, error=None,
+    activation_reason=None, error=None, judges=(),
 ):
     session.add_action(ActionRecord(
         span_id=span_id,
@@ -76,6 +77,7 @@ def _record_action(
         group_id=group_id,
         iteration=iteration,
         activation_reason=activation_reason,
+        judges=list(judges),
     ))
     if parent_span_id is not None:
         session.add_transition(TransitionRecord(
@@ -120,7 +122,7 @@ def _begin_action(func, args, kwargs, *, action_id, name, tags, role):
     }
 
 
-def _complete_action(ctx, *, name, description, goal, tags, role, result):
+def _complete_action(ctx, *, name, description, goal, tags, role, result, judges=()):
     """Record a successful action and return the serialized output."""
     output_str = _safe_serialize(result)
     latency = (time.perf_counter() - ctx["start"]) * 1000
@@ -132,13 +134,13 @@ def _complete_action(ctx, *, name, description, goal, tags, role, result):
             input_data=ctx["input_str"], output_data=output_str,
             action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
-            **ctx["topo"],
+            judges=judges, **ctx["topo"],
         )
     logger.info("Action completed: %s (%.1fms)", name, latency)
     logger.debug("Action %s output: %s", name, output_str[:500])
 
 
-def _fail_action(ctx, *, name, description, goal, tags, role, exc):
+def _fail_action(ctx, *, name, description, goal, tags, role, exc, judges=()):
     """Record a failed action."""
     latency = (time.perf_counter() - ctx["start"]) * 1000
     logger.error("Action failed: %s (%.1fms) — %s", name, latency, exc)
@@ -150,7 +152,7 @@ def _fail_action(ctx, *, name, description, goal, tags, role, exc):
             input_data=ctx["input_str"], output_data="",
             action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
-            error=str(exc), **ctx["topo"],
+            error=str(exc), judges=judges, **ctx["topo"],
         )
 
 
@@ -161,6 +163,7 @@ def _trace_decorator(
     action_id: str | None,
     tags: Sequence[str],
     role: str | None,
+    judges: Sequence[JudgeConfig] = (),
 ):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
@@ -168,10 +171,10 @@ def _trace_decorator(
             ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
             try:
                 result = func(*args, **kwargs)
-                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, judges=judges)
                 return result
             except Exception as exc:
-                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
+                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc, judges=judges)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
@@ -181,10 +184,10 @@ def _trace_decorator(
             ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
             try:
                 result = await func(*args, **kwargs)
-                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result)
+                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, judges=judges)
                 return result
             except Exception as exc:
-                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc)
+                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc, judges=judges)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
@@ -205,6 +208,7 @@ def action(
     action_id: str | None = None,
     tags: Sequence[str] = (),
     role: str | None = None,
+    judges: Sequence[JudgeConfig] = (),
 ) -> Callable:
     """Decorator to trace an action in a workflow.
 
@@ -216,6 +220,18 @@ def action(
         @action(goal="Decide which tool to call", role="think")
         def think(state): ...
 
+    Per-action judge configuration — override the global judge or run an
+    ensemble for this action only::
+
+        @action(
+            goal="Must be factually accurate",
+            judges=[
+                JudgeConfig(model="gpt-4o", temperature=0.0),
+                JudgeConfig(model="claude-opus-4-6", system_prompt="Be a strict fact-checker."),
+            ],
+        )
+        def fact_check(claim): ...
+
     Args:
         name: Action name (defaults to the function's ``__name__``).
         description: What this action does.
@@ -225,6 +241,10 @@ def action(
         tags: Labels for grouping/filtering (e.g. ``["llm", "io"]``).
         role: Semantic role (e.g. ``"generator"``, ``"evaluator"``,
               ``"think"``). Used by topology-aware analysis.
+        judges: Per-action :class:`~lattice.context.JudgeConfig` list.
+            When set, these judges are used instead of (or in addition to)
+            the global judge passed to :func:`score_trace`. When multiple
+            configs are provided, all run and the scores are averaged.
 
     Raises:
         TypeError: If *goal* is not provided.
@@ -242,7 +262,7 @@ def action(
                 f"@action requires a goal — use @action(goal=\"...\") "
                 f"instead of bare @action on '{actual_name}'."
             )
-        return _trace_decorator(actual_name, description, goal, action_id, tags, role)(func)
+        return _trace_decorator(actual_name, description, goal, action_id, tags, role, judges)(func)
 
     if _func is not None:
         return decorator(_func)
@@ -271,6 +291,7 @@ def trace_action(
     role: str | None = None,
     tags: Sequence[str] = (),
     input_data: Any = None,
+    judges: Sequence[JudgeConfig] = (),
 ):
     """Context manager for tracing code you don't own or can't decorate.
 
@@ -319,7 +340,7 @@ def trace_action(
                 input_data=input_str, output_data=output_str,
                 action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
-                **topo,
+                judges=judges, **topo,
             )
         logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
@@ -333,7 +354,7 @@ def trace_action(
                 input_data=input_str, output_data="",
                 action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
-                error=str(exc), **topo,
+                error=str(exc), judges=judges, **topo,
             )
         raise
     finally:
@@ -348,6 +369,7 @@ def instrument(
     description: str = "",
     tags: Sequence[str] = (),
     role: str | None = None,
+    judges: Sequence[JudgeConfig] = (),
 ) -> Callable:
     """Instrument an existing function for tracing without modifying its source.
 
@@ -380,4 +402,4 @@ def instrument(
             f"instrument() requires a goal — use "
             f"instrument({actual_name}, goal=\"...\")."
         )
-    return _trace_decorator(actual_name, description, goal, None, tags, role)(func)
+    return _trace_decorator(actual_name, description, goal, None, tags, role, judges)(func)
