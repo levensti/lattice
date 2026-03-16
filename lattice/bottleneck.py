@@ -4,13 +4,12 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from .context import TraceSession
+from .context import ActionRecord, TraceSession
 
 ImpactType = Literal[
     "error",
-    "lowest_score",
-    "largest_drop",
-    "below_average",
+    "root_cause",
+    "downstream_effect",
     "loop_no_convergence",
     "weakest_branch",
 ]
@@ -28,6 +27,8 @@ class BottleneckResult:
     explanation: str
     impact: ImpactType
     latency_ms: float
+    span_id: str
+    parent_span_id: str | None
 
 
 def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
@@ -35,14 +36,24 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
 
     Performs three layers of analysis:
 
-    1. **Individual actions** — errors surface first, then scored actions ordered
-       by ascending score with ties broken by latency.
+    1. **Tree-aware individual actions** — errors surface first, then scored
+       actions classified as ``"root_cause"`` (no low-scoring ancestor) or
+       ``"downstream_effect"`` (a parent also scored below average, so the
+       problem likely originated upstream).
     2. **Loop convergence** — flags repeated actions whose scores failed to
        improve across iterations (impact ``"loop_no_convergence"``).
     3. **Parallel branch imbalance** — flags the weakest branch when it
        scores significantly below the group average
        (impact ``"weakest_branch"``).
+
+    ``span_id`` and ``parent_span_id`` on each result let callers reconstruct
+    the call tree and trace a chain of downstream effects back to their
+    root cause.
     """
+    span_map: dict[str, ActionRecord] = {
+        a.span_id: a for a in session.actions if a.span_id
+    }
+
     results: list[BottleneckResult] = []
 
     for a in session.actions:
@@ -54,13 +65,15 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
                 explanation=f"Action raised an error: {a.error}",
                 impact="error",
                 latency_ms=a.latency_ms,
+                span_id=a.span_id,
+                parent_span_id=a.parent_span_id,
             ))
             continue
 
         if a.score is None:
             continue
 
-        impact = _classify_impact(a.score, a.action_index, session)
+        impact = _classify_impact(a, span_map)
         results.append(BottleneckResult(
             action_name=a.name,
             action_index=a.action_index,
@@ -68,6 +81,8 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
             explanation=a.score_explanation or "",
             impact=impact,
             latency_ms=a.latency_ms,
+            span_id=a.span_id,
+            parent_span_id=a.parent_span_id,
         ))
 
     _analyze_loops(session, results)
@@ -82,36 +97,37 @@ def find_bottlenecks(session: TraceSession) -> list[BottleneckResult]:
     return results
 
 
+_BAD_SCORE_THRESHOLD = 3.0  # midpoint of the 1–5 rating scale
+
+
 def _classify_impact(
-    score: float, action_index: int, session: TraceSession
+    action: ActionRecord,
+    span_map: dict[str, ActionRecord],
 ) -> ImpactType:
-    scored = sorted(
-        [s for s in session.actions if s.score is not None],
-        key=lambda s: s.action_index,
-    )
-    if not scored:
-        return "lowest_score"
+    """Walk up the parent chain.
 
-    min_score = min(s.score for s in scored)
-    if score <= min_score:
-        return "lowest_score"
+    An action is a ``downstream_effect`` only when it is itself below the
+    bad-score threshold *and* at least one ancestor is also below that
+    threshold — meaning the problem likely originated upstream.  Actions
+    that score well are always ``root_cause`` regardless of their ancestry.
+    """
+    if action.score >= _BAD_SCORE_THRESHOLD:
+        return "root_cause"
 
-    prev_steps = [s for s in scored if s.action_index < action_index]
-    if prev_steps:
-        prev_score = prev_steps[-1].score
-        drop = prev_score - score
-        all_drops = [
-            scored[i - 1].score - scored[i].score
-            for i in range(1, len(scored))
-        ]
-        if all_drops and drop >= max(all_drops) and drop > 0:
-            return "largest_drop"
-
-    return "below_average"
+    parent_id = action.parent_span_id
+    while parent_id is not None:
+        parent = span_map.get(parent_id)
+        if parent is None:
+            break
+        if parent.score is not None and parent.score < _BAD_SCORE_THRESHOLD:
+            return "downstream_effect"
+        parent_id = parent.parent_span_id
+    return "root_cause"
 
 
 def _analyze_loops(
-    session: TraceSession, results: list[BottleneckResult]
+    session: TraceSession,
+    results: list[BottleneckResult],
 ) -> None:
     """Detect loop convergence issues.
 
@@ -139,9 +155,10 @@ def _analyze_loops(
             named_steps.sort(key=lambda s: (s.iteration if s.iteration is not None else 0))
             scores = [s.score for s in named_steps]
             if scores[-1] <= scores[0]:
+                last = named_steps[-1]
                 results.append(BottleneckResult(
                     action_name=f"{name} (loop '{group.name}')",
-                    action_index=named_steps[-1].action_index,
+                    action_index=last.action_index,
                     score=scores[-1],
                     explanation=(
                         f"No improvement across {len(scores)} iterations: "
@@ -149,11 +166,14 @@ def _analyze_loops(
                     ),
                     impact="loop_no_convergence",
                     latency_ms=sum(s.latency_ms for s in named_steps),
+                    span_id=last.span_id,
+                    parent_span_id=last.parent_span_id,
                 ))
 
 
 def _analyze_parallel(
-    session: TraceSession, results: list[BottleneckResult]
+    session: TraceSession,
+    results: list[BottleneckResult],
 ) -> None:
     """Detect parallel branch imbalance.
 
@@ -184,4 +204,6 @@ def _analyze_parallel(
                 ),
                 impact="weakest_branch",
                 latency_ms=worst.latency_ms,
+                span_id=worst.span_id,
+                parent_span_id=worst.parent_span_id,
             ))
