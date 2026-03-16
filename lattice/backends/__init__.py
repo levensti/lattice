@@ -1,7 +1,7 @@
 """Pluggable storage backends for lattice traces.
 
-The :class:`StorageBackend` protocol defines the interface every backend must
-implement.  :class:`SQLiteBackend` ships as the zero-config default.
+The :class:`StorageStore` protocol defines the interface every backend must
+implement.  :class:`SQLiteStore` ships as the zero-config default.
 
 Bring your own backend::
 
@@ -11,7 +11,7 @@ Bring your own backend::
     lattice.configure(backend=PostgresBackend(os.environ["DATABASE_URL"]))
 """
 
-from .base import StorageBackend
-from .sqlite import SQLiteBackend
+from .base import StorageStore
+from .sqlite import SQLiteStore
 
-__all__ = ["StorageBackend", "SQLiteBackend"]
+__all__ = ["StorageStore", "SQLiteStore"]

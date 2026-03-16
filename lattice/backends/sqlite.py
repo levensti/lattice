@@ -15,7 +15,7 @@ from ..context import (
     TraceSession,
     TransitionRecord,
 )
-from .base import StorageBackend
+from .base import StorageStore
 
 DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces.db"
 
@@ -37,7 +37,7 @@ ON traces (workflow_name)
 """
 
 
-class SQLiteBackend(StorageBackend):
+class SQLiteStore(StorageStore):
     """Stores traces in a local SQLite database.
 
     Args:
@@ -51,8 +51,8 @@ class SQLiteBackend(StorageBackend):
         lattice.configure(db_path="/tmp/my_traces.db")
 
         # or equivalently:
-        from lattice.backends import SQLiteBackend
-        lattice.configure(backend=SQLiteBackend("/tmp/my_traces.db"))
+        from lattice.backends import SQLiteStore
+        lattice.configure(backend=SQLiteStore("/tmp/my_traces.db"))
     """
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
@@ -78,7 +78,7 @@ class SQLiteBackend(StorageBackend):
         self._local.path = self._db_path
         return conn
 
-    # ── StorageBackend interface ───────────────────────────────────────
+    # ── StorageStore interface ───────────────────────────────────────
 
     def save_session(self, session: TraceSession) -> None:
         """Persist a completed trace session."""

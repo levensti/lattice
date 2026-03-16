@@ -8,7 +8,7 @@ from ..context import TraceSession
 
 
 @runtime_checkable
-class StorageBackend(Protocol):
+class StorageStore(Protocol):
     """Minimal interface for persisting and retrieving trace sessions.
 
     Implement both methods and pass an instance to :func:`lattice.configure`::
