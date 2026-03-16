@@ -23,8 +23,6 @@ from .decorators import action, instrument, trace_action
 from .judge.prompt_builder import (
     ActionPromptBuilder,
     JUDGE_SYSTEM_PROMPT,
-    RATING_SCALE,
-    RESPONSE_FORMAT,
     SessionPromptBuilder,
 )
 from .judge.providers import JudgeProvider
@@ -46,8 +44,6 @@ __all__ = [
     "JudgeProvider",
     "JudgeResult",
     "LoopContext",
-    "RATING_SCALE",
-    "RESPONSE_FORMAT",
     "SessionPromptBuilder",
     "TraceSession",
     "TransitionRecord",

@@ -33,68 +33,50 @@ class JudgeConfig:
     """Configuration for the judge that evaluates an action.
 
     Attach to ``@action(judge=JudgeConfig(...))`` to configure how the action
-    is evaluated. The judge makes a **single** LLM call with structured
-    criteria and chain-of-thought reasoning before scoring.
+    is evaluated. The ``system_prompt`` is the rubric — define scoring
+    criteria, anchors, response format, and any reference material there.
 
     Examples::
 
-        # Simple — override the model for this action only
         @action(
-            goal="Summarise accurately",
-            judge=JudgeConfig(model="claude-opus-4-6", temperature=0.0),
-        )
-        def summarise(doc): ...
-
-        # Multi-criteria rubric — one call, per-criterion scores
-        @action(
-            goal="Research and cite sources accurately",
+            goal="Summarise the paper into 3 bullet points",
             judge=JudgeConfig(
                 model="claude-opus-4-6",
-                criteria={
-                    "factual_accuracy": "Are all claims supported by verifiable evidence?",
-                    "citation_quality": "Are sources credible and cited properly?",
-                },
-            ),
-        )
-        def research(topic): ...
+                system_prompt=\"\"\"You evaluate research summaries.
 
-        # With a reference answer for calibration
-        @action(
-            goal="Answer the question correctly",
-            judge=JudgeConfig(
-                model="gpt-4o",
-                criteria={"correctness": "Does the answer match the reference?"},
-                reference="Python was created by Guido van Rossum in 1991.",
+Score 1: Wrong number of bullets or major factual errors.
+Score 2: 3 bullets but one is factually wrong.
+Score 3: 3 accurate bullets, one vague or incomplete.
+Score 4: 3 accurate bullets, minor wording issues.
+Score 5: 3 tight, distinct, fully accurate bullets.
+
+Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "..."}\"\"\",
             ),
         )
-        def answer(question): ...
+        def summarise(paper): ...
 
         # Full control — bring your own provider instance
-        @action(goal="...", judge=JudgeConfig(provider=my_rag_judge))
+        @action(
+            goal="...",
+            judge=JudgeConfig(system_prompt="...", provider=my_judge),
+        )
         def step(): ...
 
     Args:
+        system_prompt: **Required.** The judge's rubric and instructions.
+            Define scoring criteria, per-score anchors, response format, and
+            any reference material here. This is the system turn sent to the
+            judge LLM on every call.
         model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
             Resolved via the same routing logic as :func:`score_trace`.
         api_key: API key override. Falls back to the relevant environment
             variable when omitted.
-        system_prompt: Override the judge system prompt. Falls back to the
-            global system prompt passed to :func:`score_trace` if omitted.
         temperature: Sampling temperature passed to the judge LLM.
         top_p: Top-p sampling parameter passed to the judge LLM.
-        criteria: Mapping of criterion name → description. The judge evaluates
-            each criterion separately in a **single** LLM call and returns
-            per-criterion scores. When omitted, a single overall score is
-            produced. Individual results are stored on
-            ``action.judge_results``.
-        reference: Gold-standard reference answer injected into the judge
-            prompt. Use this for fact-checking or tasks where a correct answer
-            is known — the judge calibrates its score against the reference.
         action_prompt_builder: Custom callable that fully replaces the default
             user prompt. Must accept ``name``, ``description``, ``goal``,
             ``input_data``, ``output_data`` as keyword arguments and return a
-            string. When set, ``criteria`` and ``reference`` are not injected
-            automatically (the builder controls the full prompt).
+            string.
         provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
             instance. When set, ``model`` and ``api_key`` are ignored.
     """
@@ -102,38 +84,28 @@ class JudgeConfig:
     def __init__(
         self,
         *,
+        system_prompt: str,
         model: str | None = None,
         api_key: str | None = None,
-        system_prompt: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        criteria: dict[str, str] | None = None,
-        reference: str | None = None,
         action_prompt_builder: Callable | None = None,
         provider: Any = None,
     ) -> None:
+        self.system_prompt = system_prompt
         self.model = model
         self.api_key = api_key
-        self.system_prompt = system_prompt
         self.temperature = temperature
         self.top_p = top_p
-        self.criteria = criteria
-        self.reference = reference
         self.action_prompt_builder = action_prompt_builder
         self.provider = provider
 
     def __repr__(self) -> str:
-        parts = []
+        parts = ["system_prompt=..."]
         if self.provider is not None:
             parts.append(f"provider={self.provider!r}")
         elif self.model:
             parts.append(f"model={self.model!r}")
-        if self.criteria:
-            parts.append(f"criteria={list(self.criteria)!r}")
-        if self.reference:
-            parts.append("reference=...")
-        if self.system_prompt:
-            parts.append("system_prompt=...")
         if self.temperature is not None:
             parts.append(f"temperature={self.temperature}")
         if self.top_p is not None:
