@@ -16,61 +16,76 @@ logger = logging.getLogger("lattice")
 
 @dataclass
 class JudgeResult:
-    """Score produced by one judge for a single action."""
+    """Score produced by one judge for a single action.
+
+    When multiple judges are used on an action (multi-axis evaluation),
+    each axis produces one :class:`JudgeResult`. Access them via
+    ``action.judge_results``.
+    """
 
     score: float
     explanation: str
-    model: str
+    name: str  # axis / criterion name from JudgeConfig.name, or model name as fallback
+    model: str  # model that produced this score
 
 
 class JudgeConfig:
-    """Configuration for a single judge LLM.
+    """Configuration for a single evaluation axis.
 
-    Pass a list of these to ``@action(judges=[...])`` to override the global
-    judge for that specific action and/or run an ensemble of judges.
+    Attach a list of these to ``@action(judges=[...])`` to evaluate an action
+    on multiple independent criteria — each ``JudgeConfig`` is one axis.
 
     Examples::
 
-        # Single judge with custom settings
+        # Two axes: factual accuracy and citation quality
         @action(
-            goal="Must cite sources",
-            judges=[JudgeConfig(model="gpt-4o", temperature=0.0)],
+            goal="Research and cite sources accurately",
+            judges=[
+                JudgeConfig(
+                    name="factual_accuracy",
+                    system_prompt="Score only whether the facts are correct.",
+                    model="gpt-4o",
+                    temperature=0.0,
+                ),
+                JudgeConfig(
+                    name="citation_quality",
+                    system_prompt="Score only whether sources are cited properly.",
+                    model="gpt-4o",
+                ),
+            ],
         )
         def research(topic): ...
 
-        # Ensemble — action scored by two models, score is their mean
-        @action(
-            goal="Must be factually accurate",
-            judges=[
-                JudgeConfig(model="gpt-4o", system_prompt="You are a strict fact-checker."),
-                JudgeConfig(model="claude-opus-4-6"),
-            ],
-        )
-        def fact_check(claim): ...
-
         # Full control — bring your own provider instance
-        @action(goal="...", judges=[JudgeConfig(provider=my_custom_provider)])
+        @action(
+            goal="...",
+            judges=[JudgeConfig(name="retrieval_accuracy", provider=my_rag_judge)],
+        )
         def step(): ...
 
     Args:
+        name: Label for this evaluation axis (e.g. ``"factual_accuracy"``).
+            Shown in ``score_explanation`` and stored on :class:`JudgeResult`.
+            Defaults to the model name when omitted.
         model: Model name (e.g. ``"gpt-4o"``, ``"claude-opus-4-6"``).
             Resolved via the same routing logic as :func:`score_trace`.
         api_key: API key override. Falls back to the relevant environment
             variable when omitted.
-        system_prompt: Override the judge system prompt for this action only.
+        system_prompt: System prompt for this judge. Defines what criterion
+            to evaluate. Falls back to the global system prompt if omitted.
         temperature: Sampling temperature passed to the judge LLM.
         top_p: Top-p sampling parameter passed to the judge LLM.
         action_prompt_builder: Custom callable that builds the user prompt.
             Must accept ``name``, ``description``, ``goal``, ``input_data``,
             ``output_data`` as keyword arguments and return a string.
         provider: Explicit :class:`~lattice.judge.providers.JudgeProvider`
-            instance. When set, all other fields except *system_prompt* and
-            *action_prompt_builder* are ignored.
+            instance. When set, ``model`` and ``api_key`` are ignored.
     """
 
     def __init__(
         self,
         *,
+        name: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
         system_prompt: str | None = None,
@@ -79,6 +94,7 @@ class JudgeConfig:
         action_prompt_builder: Callable | None = None,
         provider: Any = None,
     ) -> None:
+        self.name = name
         self.model = model
         self.api_key = api_key
         self.system_prompt = system_prompt
@@ -89,6 +105,8 @@ class JudgeConfig:
 
     def __repr__(self) -> str:
         parts = []
+        if self.name:
+            parts.append(f"name={self.name!r}")
         if self.provider is not None:
             parts.append(f"provider={self.provider!r}")
         elif self.model:

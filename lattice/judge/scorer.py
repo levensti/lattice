@@ -81,6 +81,11 @@ def _provider_from_config(config: JudgeConfig, fallback: JudgeProvider | None) -
     )
 
 
+def _result_label(config: JudgeConfig, prov: JudgeProvider) -> str:
+    """Human-readable label for a judge result: axis name or model name."""
+    return config.name or getattr(prov, "model", None) or "judge"
+
+
 def _apply_judge_results(action: ActionRecord, results: list[JudgeResult]) -> None:
     """Store *results* on *action*, setting the aggregate score/explanation."""
     action.judge_results = results
@@ -89,7 +94,7 @@ def _apply_judge_results(action: ActionRecord, results: list[JudgeResult]) -> No
         action.score_explanation = results[0].explanation
     else:
         action.score_explanation = "; ".join(
-            f"{r.model} ({r.score:.1f}/5): {r.explanation}" for r in results
+            f"{r.name} ({r.score:.1f}/5): {r.explanation}" for r in results
         )
 
 
@@ -108,8 +113,12 @@ def _score_single_action(
             builder = config.action_prompt_builder or action_prompt_builder
             raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder))
             score, explanation = _parse_judge_response(raw)
-            model_name = getattr(prov, "model", "custom")
-            results.append(JudgeResult(score=score, explanation=explanation, model=model_name))
+            results.append(JudgeResult(
+                score=score,
+                explanation=explanation,
+                name=_result_label(config, prov),
+                model=getattr(prov, "model", "custom"),
+            ))
         _apply_judge_results(action, results)
     else:
         if provider is None:
@@ -136,8 +145,12 @@ async def _async_score_single_action(
             builder = config.action_prompt_builder or action_prompt_builder
             raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder))
             score, explanation = _parse_judge_response(raw)
-            model_name = getattr(prov, "model", "custom")
-            return JudgeResult(score=score, explanation=explanation, model=model_name)
+            return JudgeResult(
+                score=score,
+                explanation=explanation,
+                name=_result_label(config, prov),
+                model=getattr(prov, "model", "custom"),
+            )
 
         results = await asyncio.gather(*[_run_one(c) for c in action.judges])
         _apply_judge_results(action, list(results))
