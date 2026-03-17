@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC
 from enum import Enum
 
@@ -177,7 +176,7 @@ class OpenAIProvider(InferenceProvider):
 
     Args:
         model: Model name (e.g. ``"gpt-4o"``).
-        api_key: API key. Falls back to ``OPENAI_API_KEY`` env var.
+        api_key: **Required.** API key for the target endpoint.
         api_base: Base URL for the API. Defaults to OpenAI's endpoint.
             Override for Fireworks, Sail, or any OpenAI-compatible service.
         api_type: Wire protocol. ``CHAT_COMPLETIONS`` (default) or
@@ -193,7 +192,7 @@ class OpenAIProvider(InferenceProvider):
         self,
         model: str = "gpt-4o",
         *,
-        api_key: str | None = None,
+        api_key: str,
         api_base: str = "https://api.openai.com/v1",
         api_type: ApiType = ApiType.CHAT_COMPLETIONS,
         timeout: float = _DEFAULT_TIMEOUT,
@@ -205,13 +204,8 @@ class OpenAIProvider(InferenceProvider):
                 f"OpenAIProvider supports {', '.join(t.value for t in self._SUPPORTED)}, "
                 f"not {api_type.value}"
             )
-        if api_key is None:
-            api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError(
-                "No API key for OpenAIProvider. "
-                "Set OPENAI_API_KEY or pass api_key=."
-            )
+            raise ValueError("api_key is required for OpenAIProvider")
         self.api_type = api_type
         self.model = model
         self.api_key = api_key
@@ -300,7 +294,7 @@ class AnthropicProvider(InferenceProvider):
 
     Args:
         model: Model name (e.g. ``"claude-sonnet-4-20250514"``).
-        api_key: API key. Falls back to ``ANTHROPIC_API_KEY`` env var.
+        api_key: **Required.** API key for the Anthropic endpoint.
         timeout: Request timeout in seconds.
         temperature: Sampling temperature.
         top_p: Top-p sampling parameter.
@@ -310,18 +304,13 @@ class AnthropicProvider(InferenceProvider):
         self,
         model: str = "claude-sonnet-4-20250514",
         *,
-        api_key: str | None = None,
+        api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,
         temperature: float = 0.1,
         top_p: float | None = None,
     ):
-        if api_key is None:
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError(
-                "No API key for AnthropicProvider. "
-                "Set ANTHROPIC_API_KEY or pass api_key=."
-            )
+            raise ValueError("api_key is required for AnthropicProvider")
         self.api_type = ApiType.MESSAGES
         self.model = model
         self.api_key = api_key
@@ -380,7 +369,7 @@ class OpenRouterProvider(InferenceProvider):
     Args:
         model: Model name as listed on OpenRouter (e.g.
             ``"google/gemini-2.0-flash"``, ``"meta-llama/llama-3-70b"``).
-        api_key: API key. Falls back to ``OPENROUTER_API_KEY`` env var.
+        api_key: **Required.** API key for the OpenRouter endpoint.
         timeout: Request timeout in seconds.
         temperature: Sampling temperature.
         top_p: Top-p sampling parameter.
@@ -390,18 +379,13 @@ class OpenRouterProvider(InferenceProvider):
         self,
         model: str,
         *,
-        api_key: str | None = None,
+        api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,
         temperature: float = 0.1,
         top_p: float | None = None,
     ):
-        if api_key is None:
-            api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
-            raise ValueError(
-                "No API key for OpenRouterProvider. "
-                "Set OPENROUTER_API_KEY or pass api_key=."
-            )
+            raise ValueError("api_key is required for OpenRouterProvider")
         self.api_type = ApiType.CHAT_COMPLETIONS
         self.model = model
         self.api_key = api_key

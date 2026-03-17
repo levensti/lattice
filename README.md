@@ -106,36 +106,65 @@ with trace_session(goal="Find and summarize relevant results") as session:
 
 ## Scoring
 
-Scoring requires an `InferenceProvider` — an explicit object that knows how to call your LLM. Construct a provider and pass it to `score_trace`:
+Scoring requires an `InferenceProvider` — an explicit object that knows how to call your LLM. Construct a provider (passing an API key explicitly) and pass it to `score_trace`:
 
 ```python
+import os
+
 from lattice import OpenAIProvider, AnthropicProvider, OpenRouterProvider
 
-score_trace(session, provider=OpenAIProvider("gpt-4o"))
-score_trace(session, provider=AnthropicProvider("claude-sonnet-4-20250514"))
-score_trace(session, provider=OpenRouterProvider("google/gemini-2.0-flash"))
+score_trace(
+    session,
+    provider=OpenAIProvider(
+        "gpt-4o",
+        api_key=os.environ["OPENAI_API_KEY"],
+    ),
+)
+score_trace(
+    session,
+    provider=AnthropicProvider(
+        "claude-sonnet-4-20250514",
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+    ),
+)
+score_trace(
+    session,
+    provider=OpenRouterProvider(
+        "google/gemini-2.0-flash",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    ),
+)
 ```
 
-Each provider reads its API key from the standard environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) or accepts an explicit `api_key=`. Use `async_score_trace` for concurrent scoring.
+This pattern (reading from `os.environ[...]` in your own code) keeps configuration explicit and avoids silent failures from mismatched environment variable names. Use `async_score_trace` for concurrent scoring.
 
 ### Providers
 
-| Class                | Wire protocol                 | Env var              |
-| -------------------- | ----------------------------- | -------------------- |
-| `OpenAIProvider`     | Chat Completions or Responses | `OPENAI_API_KEY`     |
-| `AnthropicProvider`  | Messages                      | `ANTHROPIC_API_KEY`  |
-| `OpenRouterProvider` | Chat Completions              | `OPENROUTER_API_KEY` |
+| Class                | Wire protocol                 | Typical env var you might pass |
+| -------------------- | ----------------------------- | --------------------------------|
+| `OpenAIProvider`     | Chat Completions or Responses | `OPENAI_API_KEY`               |
+| `AnthropicProvider`  | Messages                      | `ANTHROPIC_API_KEY`            |
+| `OpenRouterProvider` | Chat Completions              | `OPENROUTER_API_KEY`           |
 
 Each provider's wire protocol is controlled by the `ApiType` enum. `OpenAIProvider` defaults to `CHAT_COMPLETIONS` but also supports the newer `RESPONSES` API:
 
 ```python
+import os
+
 from lattice import OpenAIProvider, ApiType
 
 # Default — Chat Completions (/v1/chat/completions)
-provider = OpenAIProvider("gpt-4o")
+provider = OpenAIProvider(
+    "gpt-4o",
+    api_key=os.environ["OPENAI_API_KEY"],
+)
 
 # Responses API (/v1/responses)
-provider = OpenAIProvider("gpt-4o", api_type=ApiType.RESPONSES)
+provider = OpenAIProvider(
+    "gpt-4o",
+    api_key=os.environ["OPENAI_API_KEY"],
+    api_type=ApiType.RESPONSES,
+)
 ```
 
 `OpenAIProvider` also supports custom endpoints for providers like Fireworks or Sail via `api_base=`:
@@ -143,8 +172,8 @@ provider = OpenAIProvider("gpt-4o", api_type=ApiType.RESPONSES)
 ```python
 provider = OpenAIProvider(
     "accounts/fireworks/my-model",
+    api_key=os.environ["FIREWORKS_API_KEY"],
     api_base="https://api.fireworks.ai/inference/v1",
-    api_key="fw-...",
 )
 ```
 

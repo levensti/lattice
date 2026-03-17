@@ -66,68 +66,53 @@ def test_api_type_values():
 # ── OpenAIProvider ───────────────────────────────────────────────────
 
 
-def test_openai_provider_reads_env_key(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    prov = OpenAIProvider("gpt-4o")
-    assert prov.api_key == "test-key"
-    assert prov.model == "gpt-4o"
+def test_openai_provider_requires_api_key():
+    with pytest.raises(TypeError):
+        # api_key is a required keyword-only argument
+        OpenAIProvider("gpt-4o")  # type: ignore[call-arg]
 
 
-def test_openai_provider_explicit_key_overrides_env(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
-    prov = OpenAIProvider("gpt-4o", api_key="explicit-key")
-    assert prov.api_key == "explicit-key"
+def test_openai_provider_rejects_empty_key():
+    with pytest.raises(ValueError, match="api_key is required"):
+        OpenAIProvider("gpt-4o", api_key="")
 
 
-def test_openai_provider_raises_without_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="No API key"):
-        OpenAIProvider("gpt-4o")
-
-
-def test_openai_provider_custom_api_base(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("my-model", api_base="https://api.fireworks.ai/v1")
+def test_openai_provider_custom_api_base():
+    prov = OpenAIProvider("my-model", api_key="k", api_base="https://api.fireworks.ai/v1")
     assert prov.api_base == "https://api.fireworks.ai/v1"
 
 
-def test_openai_provider_default_api_type(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("gpt-4o")
+def test_openai_provider_default_api_type():
+    prov = OpenAIProvider("gpt-4o", api_key="k")
     assert prov.api_type == ApiType.CHAT_COMPLETIONS
 
 
-def test_openai_provider_responses_api_type(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("gpt-4o", api_type=ApiType.RESPONSES)
+def test_openai_provider_responses_api_type():
+    prov = OpenAIProvider("gpt-4o", api_key="k", api_type=ApiType.RESPONSES)
     assert prov.api_type == ApiType.RESPONSES
 
 
-def test_openai_provider_rejects_messages_api_type(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
+def test_openai_provider_rejects_messages_api_type():
     with pytest.raises(ValueError, match="not messages"):
-        OpenAIProvider("gpt-4o", api_type=ApiType.MESSAGES)
+        OpenAIProvider("gpt-4o", api_key="k", api_type=ApiType.MESSAGES)
 
 
-def test_openai_provider_cc_payload(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("gpt-4o", temperature=0.5, top_p=0.9)
+def test_openai_provider_cc_payload():
+    prov = OpenAIProvider("gpt-4o", api_key="k", temperature=0.5, top_p=0.9)
     payload = prov._cc_payload("sys", "user")
     assert payload["temperature"] == 0.5
     assert payload["top_p"] == 0.9
     assert payload["messages"][0]["role"] == "system"
 
 
-def test_openai_provider_cc_top_p_omitted_when_none(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("gpt-4o", temperature=0.1)
+def test_openai_provider_cc_top_p_omitted_when_none():
+    prov = OpenAIProvider("gpt-4o", api_key="k", temperature=0.1)
     payload = prov._cc_payload("sys", "user")
     assert "top_p" not in payload
 
 
-def test_openai_provider_responses_payload(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-    prov = OpenAIProvider("gpt-4o", api_type=ApiType.RESPONSES, temperature=0.3)
+def test_openai_provider_responses_payload():
+    prov = OpenAIProvider("gpt-4o", api_key="k", api_type=ApiType.RESPONSES, temperature=0.3)
     payload = prov._responses_payload("sys", "user")
     assert payload["instructions"] == "sys"
     assert payload["input"] == "user"
@@ -137,27 +122,23 @@ def test_openai_provider_responses_payload(monkeypatch):
 # ── AnthropicProvider ────────────────────────────────────────────────
 
 
-def test_anthropic_provider_reads_env_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    prov = AnthropicProvider("claude-sonnet-4-20250514")
-    assert prov.api_key == "test-key"
+def test_anthropic_provider_requires_api_key():
+    with pytest.raises(TypeError):
+        AnthropicProvider()  # type: ignore[call-arg]
 
 
-def test_anthropic_provider_raises_without_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="No API key"):
-        AnthropicProvider()
+def test_anthropic_provider_rejects_empty_key():
+    with pytest.raises(ValueError, match="api_key is required"):
+        AnthropicProvider(api_key="")
 
 
-def test_anthropic_provider_api_type_is_messages(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    prov = AnthropicProvider()
+def test_anthropic_provider_api_type_is_messages():
+    prov = AnthropicProvider(api_key="k")
     assert prov.api_type == ApiType.MESSAGES
 
 
-def test_anthropic_provider_messages_payload(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    prov = AnthropicProvider(temperature=0.3, top_p=0.8)
+def test_anthropic_provider_messages_payload():
+    prov = AnthropicProvider(api_key="k", temperature=0.3, top_p=0.8)
     payload = prov._messages_payload("sys", "user")
     assert payload["system"] == "sys"
     assert payload["messages"][0]["content"] == "user"
@@ -165,9 +146,8 @@ def test_anthropic_provider_messages_payload(monkeypatch):
     assert payload["top_p"] == 0.8
 
 
-def test_anthropic_provider_top_p_omitted_when_none(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    prov = AnthropicProvider(temperature=0.1)
+def test_anthropic_provider_top_p_omitted_when_none():
+    prov = AnthropicProvider(api_key="k", temperature=0.1)
     payload = prov._messages_payload("sys", "user")
     assert "top_p" not in payload
 
@@ -175,29 +155,24 @@ def test_anthropic_provider_top_p_omitted_when_none(monkeypatch):
 # ── OpenRouterProvider ───────────────────────────────────────────────
 
 
-def test_openrouter_provider_reads_env_key(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    prov = OpenRouterProvider("google/gemini-2.0-flash")
-    assert prov.api_key == "or-key"
-    assert "openrouter" in prov.api_base
+def test_openrouter_provider_requires_api_key():
+    with pytest.raises(TypeError):
+        OpenRouterProvider("google/gemini-2.0-flash")  # type: ignore[call-arg]
 
 
-def test_openrouter_provider_raises_without_key(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="No API key"):
-        OpenRouterProvider("google/gemini-2.0-flash")
+def test_openrouter_provider_rejects_empty_key():
+    with pytest.raises(ValueError, match="api_key is required"):
+        OpenRouterProvider("google/gemini-2.0-flash", api_key="")
 
 
-def test_openrouter_provider_is_inference_provider(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    prov = OpenRouterProvider("google/gemini-2.0-flash")
+def test_openrouter_provider_is_inference_provider():
+    prov = OpenRouterProvider("google/gemini-2.0-flash", api_key="k")
     assert isinstance(prov, InferenceProvider)
     assert not isinstance(prov, OpenAIProvider)
 
 
-def test_openrouter_provider_api_type_is_chat_completions(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    prov = OpenRouterProvider("google/gemini-2.0-flash")
+def test_openrouter_provider_api_type_is_chat_completions():
+    prov = OpenRouterProvider("google/gemini-2.0-flash", api_key="k")
     assert prov.api_type == ApiType.CHAT_COMPLETIONS
 
 
