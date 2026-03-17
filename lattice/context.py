@@ -19,16 +19,14 @@ logger = logging.getLogger("lattice")
 
 @dataclass
 class JudgeResult:
-    """Score produced by one judge for a single action.
+    """Score produced by a judge for a single action.
 
-    When multiple judges are used on an action (multi-axis evaluation),
-    each axis produces one :class:`JudgeResult`. Access them via
-    ``action.judge_results``.
+    One judge, one prompt, one score. Access via ``action.judge_result``.
     """
 
     score: float
     explanation: str
-    name: str  # axis / criterion name from JudgeConfig.name, or model name as fallback
+    name: str  # descriptive name for this evaluation
     model: str  # model that produced this score
 
 
@@ -130,10 +128,12 @@ class ActionRecord:
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None
-    # Per-action judge config — not persisted (stripped in to_dict)
+    # Per-action judge config — live object, not persisted (stripped in to_dict)
     judge: JudgeConfig | None = field(default=None, compare=False)
-    # Individual scores per criterion — persisted
-    judge_results: list[JudgeResult] = field(default_factory=list)
+    # Serializable summary of judge config — persisted
+    judge_config: dict[str, Any] | None = field(default=None)
+    # Judge result — persisted
+    judge_result: JudgeResult | None = field(default=None)
 
 
 @dataclass
@@ -156,6 +156,24 @@ class TransitionRecord:
     auto: bool = False
 
 
+def _judge_config_summary(judge: JudgeConfig) -> dict[str, Any]:
+    """Extract serializable metadata from a live JudgeConfig."""
+    provider = judge.provider
+    summary: dict[str, Any] = {
+        "system_prompt": judge.system_prompt,
+        "provider": type(provider).__name__,
+        "model": getattr(provider, "model", None),
+        "has_custom_prompt_builder": judge.action_prompt_builder is not None,
+    }
+    # Capture inference settings from the provider if available
+    for attr in ("temperature", "top_p", "timeout", "api_base", "api_type"):
+        val = getattr(provider, attr, None)
+        if val is not None:
+            # api_type is an enum — persist its value
+            summary[attr] = val.value if hasattr(val, "value") else val
+    return summary
+
+
 @dataclass
 class TraceSession:
     """Groups multiple traced actions into a single debugging session."""
@@ -168,6 +186,7 @@ class TraceSession:
     transitions: list[TransitionRecord] = field(default_factory=list)
     session_score: float | None = field(default=None)
     session_score_explanation: str | None = field(default=None)
+    created_at: str | None = field(default=None)
     _action_counter: int = field(default=0, repr=False)
 
     def next_index(self) -> int:
@@ -186,10 +205,14 @@ class TraceSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the session to a plain dict (suitable for JSON)."""
+        # Snapshot serializable judge config summaries before asdict
+        for action in self.actions:
+            if action.judge is not None and action.judge_config is None:
+                action.judge_config = _judge_config_summary(action.judge)
         d = asdict(self)
         d.pop("_action_counter", None)
         # judge contains non-serializable objects (callables, provider instances);
-        # strip it — only judge_results (plain scores) are persisted.
+        # strip it — judge_config (serializable summary) is persisted instead.
         for action_dict in d.get("actions", []):
             action_dict.pop("judge", None)
         return d

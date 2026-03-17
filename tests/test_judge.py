@@ -449,4 +449,9 @@ def test_judge_stripped_from_serialization():
 
     d = session.to_dict()
     assert "judge" not in d["actions"][0]
-    assert "judge_results" in d["actions"][0]
+    assert "judge_result" in d["actions"][0]
+    # judge_config summary should be populated from the live JudgeConfig
+    cfg = d["actions"][0]["judge_config"]
+    assert cfg is not None
+    assert cfg["system_prompt"] == _RUBRIC
+    assert cfg["provider"] == type(prov).__name__
