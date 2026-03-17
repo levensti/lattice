@@ -1,8 +1,10 @@
 import asyncio
+import threading
+import time
 
 import pytest
 
-from lattice import action, trace_session
+from lattice import action, trace_session, JudgeConfig
 from lattice.decorators import instrument, trace_action
 
 
@@ -130,24 +132,38 @@ def test_step_name_inferred_from_function():
     assert session.actions[0].name == "my_function"
 
 
-def test_action_bare_decorator_raises():
+def test_action_bare_decorator_works_without_goal():
+    """Bare @action (no parens) should work for tracing without scoring."""
+    @action
+    def bare() -> str:
+        return "bare"
+
+    with trace_session(goal="test") as session:
+        assert bare() == "bare"
+
+    assert session.actions[0].name == "bare"
+
+
+def test_action_empty_parens_works_without_goal():
+    """@action() should work for tracing without scoring."""
+    @action()
+    def empty_parens() -> str:
+        return "ok"
+
+    with trace_session(goal="test") as session:
+        assert empty_parens() == "ok"
+
+    assert session.actions[0].name == "empty_parens"
+
+
+def test_action_requires_goal_when_judge_set():
+    """@action with judge= but no goal should raise."""
+    from unittest.mock import MagicMock
+    prov = MagicMock()
+
     with pytest.raises(TypeError, match="requires a goal"):
-        @action
-        def bare() -> str:
-            return "bare"
-
-
-def test_action_bare_parens_raises():
-    with pytest.raises(TypeError, match="requires a goal"):
-        @action()
-        def empty_parens() -> str:
-            return "ok"
-
-
-def test_action_positional_name_raises():
-    with pytest.raises(TypeError, match="requires a goal"):
-        @action("custom_name")
-        def original() -> str:
+        @action(judge=JudgeConfig(system_prompt="Rate it.", provider=prov))
+        def judged() -> str:
             return "ok"
 
 
@@ -230,6 +246,26 @@ def test_trace_step_with_input():
     assert "result1" in s.output_data
 
 
+def test_trace_action_scores_inline():
+    """trace_action with judge= should score in background, just like @action."""
+    from unittest.mock import MagicMock
+
+    prov = MagicMock()
+    prov.judge.return_value = '{"score": 3.5, "explanation": "decent"}'
+
+    with trace_session(goal="test", persist=False) as session:
+        with trace_action(
+            "external_call",
+            goal="get results",
+            judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
+        ) as ts:
+            ts.set_output("some results")
+
+    # Let background thread finish
+    time.sleep(0.2)
+    assert session.actions[0].score == 3.5
+
+
 def test_trace_step_nested_under_decorator():
     @action(goal="parent step")
     def parent() -> str:
@@ -276,12 +312,28 @@ def test_instrument_with_custom_name():
     assert session.actions[0].name == "custom"
 
 
-def test_instrument_requires_goal():
+def test_instrument_works_without_goal():
+    """instrument() without goal should work for tracing without scoring."""
+    def original() -> str:
+        return "ok"
+
+    traced = instrument(original)
+
+    with trace_session(goal="test") as session:
+        assert traced() == "ok"
+
+    assert session.actions[0].name == "original"
+
+
+def test_instrument_requires_goal_when_judge_set():
+    from unittest.mock import MagicMock
+    prov = MagicMock()
+
     def original() -> str:
         return "ok"
 
     with pytest.raises(TypeError, match="requires a goal"):
-        instrument(original)
+        instrument(original, judge=JudgeConfig(system_prompt="Rate it.", provider=prov))
 
 
 def test_instrument_does_not_modify_original():
@@ -362,3 +414,69 @@ def test_manual_transition_preferred_over_auto():
     manual = [t for t in to_target if not t.auto]
     assert len(manual) == 1
     assert manual[0].reason == "custom reason"
+
+
+# ── non-blocking inline scoring ─────────────────────────────────────
+
+
+def test_inline_scoring_does_not_block_caller():
+    """@action with judge= should return immediately; scoring runs in background."""
+    from unittest.mock import MagicMock
+
+    scoring_started = threading.Event()
+    scoring_gate = threading.Event()
+
+    def slow_judge(system, prompt):
+        scoring_started.set()
+        scoring_gate.wait(timeout=5)
+        return '{"score": 4, "explanation": "Good"}'
+
+    prov = MagicMock()
+    prov.judge = slow_judge
+
+    @action(
+        goal="greet",
+        judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
+    )
+    def greet(name: str) -> str:
+        return f"Hello, {name}!"
+
+    with trace_session(goal="test", persist=False) as session:
+        t0 = time.perf_counter()
+        result = greet("Alice")
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    # The call returned without waiting for the judge
+    assert result == "Hello, Alice!"
+    assert elapsed_ms < 500  # would be >5s if blocking
+
+    # Score is None immediately (judge hasn't finished)
+    assert session.actions[0].score is None
+
+    # Let the judge finish and verify score is written back
+    scoring_started.wait(timeout=5)
+    scoring_gate.set()
+    time.sleep(0.1)  # brief wait for thread to write back
+    assert session.actions[0].score == 4.0
+
+
+def test_inline_scoring_failure_does_not_crash():
+    """If the judge raises, the action still completes and score stays None."""
+    from unittest.mock import MagicMock
+
+    prov = MagicMock()
+    prov.judge.side_effect = RuntimeError("judge down")
+
+    @action(
+        goal="greet",
+        judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
+    )
+    def greet(name: str) -> str:
+        return f"Hello, {name}!"
+
+    with trace_session(goal="test", persist=False) as session:
+        result = greet("Bob")
+
+    assert result == "Hello, Bob!"
+    time.sleep(0.2)  # let the thread finish
+    assert session.actions[0].score is None

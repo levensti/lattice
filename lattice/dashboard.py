@@ -27,27 +27,53 @@ if TYPE_CHECKING:
 # ── score helpers ──────────────────────────────────────────────────────
 
 
+class _ScoreThresholds:
+    """Percentile-based thresholds derived from all scores in the dataset.
+
+    Green = top third (>= p66), Yellow = middle third (>= p33), Red = bottom.
+    Falls back to 0-based linear split if there aren't enough scores.
+    """
+
+    def __init__(self, all_scores: list[float]) -> None:
+        if not all_scores:
+            self.p33 = 0.0
+            self.p66 = 0.0
+            return
+        s = sorted(all_scores)
+        n = len(s)
+        self.p33 = s[max(0, int(n * 0.33) - 1)]
+        self.p66 = s[max(0, int(n * 0.66) - 1)]
+
+    def color(self, score: float) -> str:
+        if score >= self.p66:
+            return "#16a34a"
+        if score >= self.p33:
+            return "#ca8a04"
+        return "#dc2626"
+
+    def pill_cls(self, score: float) -> str:
+        if score >= self.p66:
+            return "pill-green"
+        if score >= self.p33:
+            return "pill-yellow"
+        return "pill-red"
+
+
+# Module-level reference set per render pass
+_thresholds = _ScoreThresholds([])
+
+
 def _score_bar(score: float | None) -> str:
     if score is None:
         return '<span class="score-none">&mdash;</span>'
-    if score >= 4:
-        color = "#16a34a"
-    elif score >= 3:
-        color = "#ca8a04"
-    else:
-        color = "#dc2626"
-    return f'<span class="score" style="color:{color}">{score:.1f}<span class="score-max">/5</span></span>'
+    color = _thresholds.color(score)
+    return f'<span class="score" style="color:{color}">{score:.1f}</span>'
 
 
 def _score_pill(score: float | None) -> str:
     if score is None:
         return ""
-    if score >= 4:
-        cls = "pill-green"
-    elif score >= 3:
-        cls = "pill-yellow"
-    else:
-        cls = "pill-red"
+    cls = _thresholds.pill_cls(score)
     return f'<span class="score-pill {cls}">{score:.1f}</span>'
 
 
@@ -902,7 +928,18 @@ tr:hover td { background: var(--surface-2); }
 
 
 def _render_page(trace_id: str | None = None) -> str:
+    global _thresholds
     all_traces = traces()
+
+    # Compute score thresholds from all scores in the dataset
+    all_scores: list[float] = []
+    for t in all_traces:
+        if t.session_score is not None:
+            all_scores.append(t.session_score)
+        for a in t.actions:
+            if a.score is not None:
+                all_scores.append(a.score)
+    _thresholds = _ScoreThresholds(all_scores)
 
     active_id = trace_id
     if not active_id and all_traces:

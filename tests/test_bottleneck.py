@@ -42,10 +42,10 @@ def test_empty_session():
 
 
 def test_no_structural_issues_returns_empty():
-    # Scored actions with no errors / loops / parallel groups → nothing to report
+    # All scores identical → no outlier to flag
     session = TraceSession()
-    session.add_action(_action("a", 0, score=4.5))
-    session.add_action(_action("b", 1, score=2.0))
+    session.add_action(_action("a", 0, score=4.0))
+    session.add_action(_action("b", 1, score=4.0))
     assert find_bottlenecks(session) == []
 
 
@@ -70,10 +70,10 @@ def test_loop_no_convergence_flagged():
     session.add_action(_action("think", 2, score=2.0, group_id=gid, iteration=2))
 
     results = find_bottlenecks(session)
-    assert len(results) == 1
-    assert results[0].impact == "loop_no_convergence"
-    assert "No improvement" in results[0].explanation
-    assert "react" in results[0].action_name
+    convergence = [r for r in results if r.impact == "loop_no_convergence"]
+    assert len(convergence) == 1
+    assert "No improvement" in convergence[0].explanation
+    assert "react" in convergence[0].action_name
 
 
 def test_loop_convergence_not_flagged_when_improving():
@@ -84,7 +84,8 @@ def test_loop_convergence_not_flagged_when_improving():
     session.add_action(_action("gen", 1, score=3.0, group_id=gid, iteration=1))
     session.add_action(_action("gen", 2, score=4.5, group_id=gid, iteration=2))
 
-    assert find_bottlenecks(session) == []
+    convergence = [r for r in find_bottlenecks(session) if r.impact == "loop_no_convergence"]
+    assert convergence == []
 
 
 def test_loop_result_carries_span_ids():
@@ -111,10 +112,10 @@ def test_parallel_weakest_branch_flagged():
     session.add_action(_action("cache", 2, score=1.0, group_id=gid))
 
     results = find_bottlenecks(session)
-    assert len(results) == 1
-    assert results[0].impact == "weakest_branch"
-    assert "cache" in results[0].action_name
-    assert "search" in results[0].action_name
+    weakest = [r for r in results if r.impact == "weakest_branch"]
+    assert len(weakest) == 1
+    assert "cache" in weakest[0].action_name
+    assert "search" in weakest[0].action_name
 
 
 def test_parallel_balanced_branches_not_flagged():
@@ -125,7 +126,8 @@ def test_parallel_balanced_branches_not_flagged():
     session.add_action(_action("b", 1, score=3.5, group_id=gid))
     session.add_action(_action("c", 2, score=4.0, group_id=gid))
 
-    assert find_bottlenecks(session) == []
+    weakest = [r for r in find_bottlenecks(session) if r.impact == "weakest_branch"]
+    assert weakest == []
 
 
 def test_parallel_result_carries_span_ids():
@@ -136,5 +138,83 @@ def test_parallel_result_carries_span_ids():
     session.add_action(_action("cache", 1, score=1.0, group_id=gid, span_id="s1", parent_span_id="s0"))
 
     results = find_bottlenecks(session)
-    assert results[0].span_id == "s1"
-    assert results[0].parent_span_id == "s0"
+    weakest = [r for r in results if r.impact == "weakest_branch"]
+    assert weakest[0].span_id == "s1"
+    assert weakest[0].parent_span_id == "s0"
+
+
+# ── lowest-scoring action ────────────────────────────────────────────
+
+
+def test_lowest_score_flagged():
+    session = TraceSession()
+    session.add_action(_action("a", 0, score=4.0))
+    session.add_action(_action("b", 1, score=4.5))
+    session.add_action(_action("c", 2, score=1.5))
+
+    results = find_bottlenecks(session)
+    lowest = [r for r in results if r.impact == "lowest_score"]
+    assert len(lowest) == 1
+    assert lowest[0].action_name == "c"
+    assert "Lowest-scoring" in lowest[0].explanation
+
+
+def test_lowest_score_not_flagged_when_all_equal():
+    session = TraceSession()
+    session.add_action(_action("a", 0, score=3.0))
+    session.add_action(_action("b", 1, score=3.0))
+
+    results = find_bottlenecks(session)
+    lowest = [r for r in results if r.impact == "lowest_score"]
+    assert len(lowest) == 0
+
+
+def test_lowest_score_not_flagged_with_single_action():
+    session = TraceSession()
+    session.add_action(_action("a", 0, score=2.0))
+
+    results = find_bottlenecks(session)
+    lowest = [r for r in results if r.impact == "lowest_score"]
+    assert len(lowest) == 0
+
+
+# ── session.bottlenecks property ─────────────────────────────────────
+
+
+# ── quality cascade ──────────────────────────────────────────────────
+
+
+def test_cascade_flagged_when_parent_degrades_child():
+    session = TraceSession()
+    session.add_action(_action("step_a", 0, score=4.5, span_id="a"))
+    session.add_action(_action("step_b", 1, score=1.0, span_id="b", parent_span_id="a"))
+    session.add_action(_action("step_c", 2, score=1.0, span_id="c", parent_span_id="b"))
+
+    results = find_bottlenecks(session)
+    cascades = [r for r in results if r.impact == "quality_cascade"]
+    assert len(cascades) >= 1
+    assert cascades[0].action_name == "step_b"
+    assert "cascaded" in cascades[0].explanation
+
+
+def test_cascade_not_flagged_when_all_scores_high():
+    session = TraceSession()
+    session.add_action(_action("step_a", 0, score=4.0, span_id="a"))
+    session.add_action(_action("step_b", 1, score=4.0, span_id="b", parent_span_id="a"))
+
+    results = find_bottlenecks(session)
+    cascades = [r for r in results if r.impact == "quality_cascade"]
+    assert cascades == []
+
+
+# ── session.bottlenecks property ─────────────────────────────────────
+
+
+def test_session_bottlenecks_property():
+    session = TraceSession()
+    session.add_action(_action("ok", 0, score=5.0))
+    session.add_action(_action("broken", 1, error="crash"))
+
+    results = session.bottlenecks
+    assert len(results) >= 1
+    assert any(r.impact == "error" for r in results)

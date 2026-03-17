@@ -54,16 +54,19 @@ def main():
     print(f"Traced {len(session.actions)} actions\n")
 
     try:
-        score_trace(session, model="gpt-4o")
+        from lattice import OpenAIProvider
+        import os
+
+        score_trace(session, provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
 
         print("=== Action Scores ===")
         for s in session.actions:
-            print(f"  [{s.action_index}] {s.name}: {s.score}/5 — {s.score_explanation}")
+            print(f"  [{s.action_index}] {s.name}: {s.score:.1f} — {s.score_explanation}")
 
         print("\n=== Bottleneck Analysis ===")
         for b in find_bottlenecks(session):
-            print(f"  {b.action_name} (score={b.score}, impact={b.impact}): {b.explanation}")
-    except ValueError as e:
+            print(f"  {b.action_name} (score={b.score:.1f}, impact={b.impact}): {b.explanation}")
+    except (KeyError, ValueError) as e:
         print(f"Skipping scoring (no API key): {e}")
 
 

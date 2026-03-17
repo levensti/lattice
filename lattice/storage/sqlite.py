@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS traces (
     trace_id                  TEXT PRIMARY KEY,
     workflow_name             TEXT NOT NULL DEFAULT '',
     goal                      TEXT NOT NULL DEFAULT '',
+    input_data                TEXT,
     session_score             REAL,
     session_score_explanation TEXT,
     created_at                TEXT NOT NULL
@@ -145,6 +146,12 @@ class SQLiteStore(Store):
 
         conn.executescript(_SCHEMA_V2)
 
+        # Migrate existing databases that lack the input_data column
+        try:
+            conn.execute("ALTER TABLE traces ADD COLUMN input_data TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         conn.execute("PRAGMA foreign_keys=ON")
         self._local.conn = conn
         self._local.path = self._db_path
@@ -166,13 +173,14 @@ class SQLiteStore(Store):
         # INSERT OR REPLACE cascades deletes via foreign keys
         conn.execute(
             "INSERT OR REPLACE INTO traces "
-            "(trace_id, workflow_name, goal, session_score, "
+            "(trace_id, workflow_name, goal, input_data, session_score, "
             "session_score_explanation, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 session.trace_id,
                 session.workflow_name,
                 session.goal,
+                session.input_data,
                 session.session_score,
                 session.session_score_explanation,
                 session.created_at,
@@ -269,7 +277,7 @@ class SQLiteStore(Store):
         limit = f"LIMIT {last}" if last is not None else ""
 
         trace_rows = conn.execute(
-            f"SELECT trace_id, workflow_name, goal, session_score, "
+            f"SELECT trace_id, workflow_name, goal, input_data, session_score, "
             f"session_score_explanation, created_at "
             f"FROM traces {where} ORDER BY created_at DESC {limit}",
             params,
@@ -380,6 +388,7 @@ class SQLiteStore(Store):
                 trace_id=tid,
                 workflow_name=wf,
                 goal=goal,
+                input_data=input_data,
                 actions=actions_by_trace.get(tid, []),
                 groups=groups_by_trace.get(tid, []),
                 transitions=transitions_by_trace.get(tid, []),
@@ -387,5 +396,5 @@ class SQLiteStore(Store):
                 session_score_explanation=expl,
                 created_at=created_at,
             )
-            for tid, wf, goal, score, expl, created_at in trace_rows
+            for tid, wf, goal, input_data, score, expl, created_at in trace_rows
         ]

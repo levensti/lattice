@@ -29,7 +29,7 @@ def _build_tree(actions: list[ActionRecord]) -> tuple[list[ActionRecord], dict[s
 
 def _format_action_line(s: ActionRecord) -> str:
     status = "ERROR" if s.error else "OK"
-    score_str = f"{s.score:.1f}/5" if s.score is not None else "-"
+    score_str = f"{s.score:.1f}" if s.score is not None else "-"
     parts = [f"{s.name}  {status}  {s.latency_ms:.0f}ms  score={score_str}"]
     if s.role:
         parts.append(f"role={s.role}")
@@ -122,7 +122,7 @@ def print_trace_summary(session: TraceSession) -> None:
                 print(f"    {from_name} \u2192 {t.to_name}{reason}")
 
     if session.session_score is not None:
-        print(f"  Session score: {session.session_score:.1f}/5")
+        print(f"  Session score: {session.session_score:.1f}")
         if session.session_score_explanation:
             print(f"  Verdict: {session.session_score_explanation}")
     print(f"{'=' * 60}\n")

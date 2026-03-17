@@ -4,6 +4,7 @@ import functools
 import inspect
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -49,6 +50,23 @@ def _safe_serialize(obj: Any, max_length: int = 8192) -> str:
     if len(s) > max_length:
         return s[:max_length] + "...[truncated]"
     return s
+
+
+def _fire_and_forget_score(
+    action_record: ActionRecord,
+    judge: JudgeConfig,
+    name: str,
+) -> None:
+    """Score an action in a daemon thread — never blocks the caller."""
+    def _run() -> None:
+        try:
+            from .judge.scorer import _score_single_action
+            _score_single_action(action_record, judge.provider, judge.system_prompt)
+        except Exception:
+            logger.warning("Background scoring failed for action %s", name, exc_info=True)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
@@ -191,14 +209,10 @@ def _complete_action(
             judge=judge, started_at=ctx["started_at"], ended_at=ended_at,
             **ctx["topo"],
         )
-        # Score inline when the action has a JudgeConfig
+        # Score in a background thread so the caller is never blocked
         if judge is not None:
             action_record = ctx["session"].actions[-1]
-            try:
-                from .judge.scorer import _score_single_action
-                _score_single_action(action_record, judge.provider, judge.system_prompt)
-            except Exception:
-                logger.warning("Inline scoring failed for action %s", name, exc_info=True)
+            _fire_and_forget_score(action_record, judge, name)
     logger.info("Action completed: %s (%.1fms)", name, latency)
     logger.debug("Action %s output: %s", name, output_str[:500])
 
@@ -343,10 +357,10 @@ def action(
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         actual_name = name if name is not None else func.__name__
-        if not goal:
+        if not goal and judge is not None:
             raise TypeError(
-                f"@action requires a goal — use @action(goal=\"...\") "
-                f"instead of bare @action on '{actual_name}'."
+                f"@action requires a goal when judge is configured — "
+                f"use @action(goal=\"...\", judge=...) on '{actual_name}'."
             )
         return _trace_decorator(actual_name, description, goal, action_id, tags, role, judge)(func)
 
@@ -397,10 +411,10 @@ def trace_action(
         tags: Labels for grouping/filtering.
         input_data: Optional input to record on the action.
     """
-    if not goal:
+    if not goal and judge is not None:
         raise TypeError(
-            f"trace_action requires a goal — use "
-            f"trace_action(\"{name}\", goal=\"...\")."
+            f"trace_action requires a goal when judge is configured — use "
+            f"trace_action(\"{name}\", goal=\"...\", judge=...)."
         )
     session = _current_session.get()
     span_id = uuid.uuid4().hex
@@ -433,6 +447,9 @@ def trace_action(
                 judge=judge, started_at=started_at, ended_at=ended_at,
                 **topo,
             )
+            if judge is not None:
+                action_record = session.actions[-1]
+                _fire_and_forget_score(action_record, judge, name)
         logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
@@ -491,9 +508,9 @@ def instrument(
         TypeError: If *goal* is not provided.
     """
     actual_name = name or getattr(func, "__name__", repr(func))
-    if not goal:
+    if not goal and judge is not None:
         raise TypeError(
-            f"instrument() requires a goal — use "
-            f"instrument({actual_name}, goal=\"...\")."
+            f"instrument() requires a goal when judge is configured — use "
+            f"instrument({actual_name}, goal=\"...\", judge=...)."
         )
     return _trace_decorator(actual_name, description, goal, None, tags, role, judge)(func)

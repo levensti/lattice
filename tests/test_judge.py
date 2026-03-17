@@ -143,7 +143,7 @@ def test_score_session_custom_session_prompt_builder():
     session.workflow_name = "summarizer"
     session.add_action(_make_action())
 
-    def custom_builder(*, goal, final_output, workflow_name):
+    def custom_builder(*, goal, final_output, workflow_name, input_data=""):
         return f"CUSTOM SESSION: {workflow_name} | {goal}"
 
     prov = _fake_provider()
@@ -178,8 +178,27 @@ def test_score_session_defaults():
         goal="test goal",
         final_output="Python is a programming language.",
         workflow_name="",
+        input_data=session.input_data or "",
     )
     assert user_arg == expected
+
+
+# ── Session input included in prompt ──────────────────────────────────
+
+
+def test_score_session_includes_input_data():
+    """Session judge prompt should include the workflow input when available."""
+    session = TraceSession(goal="Translate to French")
+    session.add_action(_make_action(input_data="Hello world"))
+    # input_data should auto-capture from first root action
+    assert session.input_data == "Hello world"
+
+    prov = _fake_provider()
+    score_session(session, provider=prov)
+
+    user_arg = prov.judge.call_args[0][1]
+    assert "Hello world" in user_arg
+    assert "Workflow input" in user_arg
 
 
 # ── Errored steps are skipped ─────────────────────────────────────────
@@ -211,8 +230,10 @@ async def test_background_scorer_scores_submitted_session():
     await scorer.drain()
     await scorer.cancel()
 
-    assert prov.ajudge.call_count == 1
     assert session.actions[0].score == 4.0
+    # 1 action + 1 session-level score
+    assert prov.ajudge.call_count == 2
+    assert session.session_score == 4.0
 
 
 @pytest.mark.asyncio
@@ -234,7 +255,8 @@ async def test_background_scorer_submit_is_nonblocking():
     scorer.submit(session)
     assert judged == []
     await scorer.drain()
-    assert judged == [True]
+    # 1 action + 1 session-level score
+    assert len(judged) == 2
     await scorer.cancel()
 
 
@@ -252,9 +274,11 @@ async def test_background_scorer_multiple_sessions():
     await scorer.drain()
     await scorer.cancel()
 
-    assert prov.ajudge.call_count == 3
+    # 3 actions + 3 session-level scores
+    assert prov.ajudge.call_count == 6
     for s in sessions:
         assert s.actions[0].score == 4.0
+        assert s.session_score == 4.0
 
 
 @pytest.mark.asyncio
@@ -270,7 +294,8 @@ async def test_background_scorer_skips_errored_steps():
     await scorer.drain()
     await scorer.cancel()
 
-    assert prov.ajudge.call_count == 1
+    # 1 ok action + 1 session-level score (errored action skipped)
+    assert prov.ajudge.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -283,7 +308,8 @@ async def test_background_scorer_submit_lazy_starts():
     scorer.submit(session)
     await scorer.drain()
     await scorer.cancel()
-    prov.ajudge.assert_called_once()
+    # 1 action + 1 session-level score
+    assert prov.ajudge.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -350,6 +376,72 @@ async def test_background_scorer_worker_error_does_not_crash_worker():
     await scorer.cancel()
 
     assert good_session.actions[0].score == 5.0
+
+
+@pytest.mark.asyncio
+async def test_background_scorer_scores_session_end_to_end():
+    """BackgroundScorer should score the session goal after scoring actions."""
+    session = TraceSession(goal="Summarize the article")
+    session.workflow_name = "summarizer"
+    session.add_action(_make_action())
+
+    prov = _fake_provider('{"score": 3.5, "explanation": "decent summary"}')
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
+
+    assert session.session_score == 3.5
+    assert session.session_score_explanation == "decent summary"
+
+
+@pytest.mark.asyncio
+async def test_background_scorer_no_session_score_without_goal():
+    """BackgroundScorer should skip session scoring when goal is empty."""
+    session = TraceSession(goal="")
+    session.add_action(_make_action())
+
+    prov = _fake_provider()
+    scorer = BackgroundScorer(provider=prov)
+    await scorer.start()
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
+
+    # Only action scoring, no session scoring (goal is empty)
+    assert prov.ajudge.call_count == 1
+    assert session.session_score is None
+
+
+@pytest.mark.asyncio
+async def test_background_scorer_persists_after_scoring(tmp_path):
+    """BackgroundScorer should save scored sessions to storage."""
+    import lattice
+    from lattice.storage.store import traces as store_traces
+
+    db_path = str(tmp_path / "bg_persist.db")
+    lattice.configure(db_path=db_path)
+
+    session = TraceSession(trace_id="bg-persist-test", goal="test")
+    session.add_action(_make_action())
+
+    # Pre-save without scores
+    from lattice.storage.store import save_session
+    save_session(session)
+    loaded = store_traces(trace_id="bg-persist-test")
+    assert loaded[0].actions[0].score is None
+
+    prov = _fake_provider('{"score": 4.2, "explanation": "solid"}')
+    scorer = BackgroundScorer(provider=prov, persist=True)
+    await scorer.start()
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
+
+    # Scores should now be persisted
+    loaded = store_traces(trace_id="bg-persist-test")
+    assert loaded[0].actions[0].score == 4.2
 
 
 # ── JudgeConfig / per-action judge ────────────────────────────────────
