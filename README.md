@@ -116,21 +116,21 @@ from lattice import OpenAIProvider, AnthropicProvider, OpenRouterProvider
 score_trace(
     session,
     provider=OpenAIProvider(
-        "gpt-4o",
+        model="gpt-4o",
         api_key=os.environ["OPENAI_API_KEY"],
     ),
 )
 score_trace(
     session,
     provider=AnthropicProvider(
-        "claude-sonnet-4-20250514",
+        model="claude-sonnet-4-20250514",
         api_key=os.environ["ANTHROPIC_API_KEY"],
     ),
 )
 score_trace(
     session,
     provider=OpenRouterProvider(
-        "google/gemini-2.0-flash",
+        model="google/gemini-2.0-flash",
         api_key=os.environ["OPENROUTER_API_KEY"],
     ),
 )
@@ -155,13 +155,13 @@ from lattice import OpenAIProvider, ApiType
 
 # Default — Chat Completions (/v1/chat/completions)
 provider = OpenAIProvider(
-    "gpt-4o",
+    model="gpt-4o",
     api_key=os.environ["OPENAI_API_KEY"],
 )
 
 # Responses API (/v1/responses)
 provider = OpenAIProvider(
-    "gpt-4o",
+    model="gpt-4o",
     api_key=os.environ["OPENAI_API_KEY"],
     api_type=ApiType.RESPONSES,
 )
@@ -171,7 +171,7 @@ provider = OpenAIProvider(
 
 ```python
 provider = OpenAIProvider(
-    "accounts/fireworks/my-model",
+    model="accounts/fireworks/my-model",
     api_key=os.environ["FIREWORKS_API_KEY"],
     api_base="https://api.fireworks.ai/inference/v1",
 )

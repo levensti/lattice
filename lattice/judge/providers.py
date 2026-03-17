@@ -190,7 +190,7 @@ class OpenAIProvider(InferenceProvider):
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str,
         *,
         api_key: str,
         api_base: str = "https://api.openai.com/v1",
@@ -302,7 +302,7 @@ class AnthropicProvider(InferenceProvider):
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-20250514",
+        model: str,
         *,
         api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,

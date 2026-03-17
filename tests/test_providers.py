@@ -124,21 +124,21 @@ def test_openai_provider_responses_payload():
 
 def test_anthropic_provider_requires_api_key():
     with pytest.raises(TypeError):
-        AnthropicProvider()  # type: ignore[call-arg]
+        AnthropicProvider("claude-sonnet-4-20250514")  # type: ignore[call-arg]
 
 
 def test_anthropic_provider_rejects_empty_key():
     with pytest.raises(ValueError, match="api_key is required"):
-        AnthropicProvider(api_key="")
+        AnthropicProvider("claude-sonnet-4-20250514", api_key="")
 
 
 def test_anthropic_provider_api_type_is_messages():
-    prov = AnthropicProvider(api_key="k")
+    prov = AnthropicProvider("claude-sonnet-4-20250514", api_key="k")
     assert prov.api_type == ApiType.MESSAGES
 
 
 def test_anthropic_provider_messages_payload():
-    prov = AnthropicProvider(api_key="k", temperature=0.3, top_p=0.8)
+    prov = AnthropicProvider("claude-sonnet-4-20250514", api_key="k", temperature=0.3, top_p=0.8)
     payload = prov._messages_payload("sys", "user")
     assert payload["system"] == "sys"
     assert payload["messages"][0]["content"] == "user"
@@ -147,7 +147,7 @@ def test_anthropic_provider_messages_payload():
 
 
 def test_anthropic_provider_top_p_omitted_when_none():
-    prov = AnthropicProvider(api_key="k", temperature=0.1)
+    prov = AnthropicProvider("claude-sonnet-4-20250514", api_key="k", temperature=0.1)
     payload = prov._messages_payload("sys", "user")
     assert "top_p" not in payload
 
