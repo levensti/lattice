@@ -17,8 +17,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     dash = subparsers.add_parser("dashboard", help="Launch the local trace dashboard")
-    dash.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
-    dash.add_argument("--port", type=int, default=8787, help="Port (default: 8787)")
+    dash.add_argument("--host", default="localhost", help="Bind address (default: localhost)")
+    dash.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
 
     args = parser.parse_args()
 

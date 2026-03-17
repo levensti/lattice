@@ -262,8 +262,8 @@ lattice.traces(trace_id="abc123")        # specific trace
 Browse traces visually with the built-in local dashboard:
 
 ```bash
-python -m lattice dashboard              # starts at http://127.0.0.1:8787
-python -m lattice dashboard --port 8080  # custom port
+python -m lattice dashboard              # starts at http://localhost:8080
+python -m lattice dashboard --port 3000  # custom port
 ```
 
 ### Configuration

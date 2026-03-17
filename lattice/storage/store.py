@@ -1,6 +1,6 @@
 """Trace persistence — thin shim that delegates to the active Store.
 
-The default backend is :class:`~lattice.backends.SQLiteStore` (zero config).
+The default backend is :class:`~lattice.storage.SQLiteStore` (zero config).
 Swap it out via :func:`configure`::
 
     import lattice
