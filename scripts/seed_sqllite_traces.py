@@ -3,6 +3,9 @@
 import sys
 sys.path.insert(0, ".")
 
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
 from lattice.context import (
     ActionRecord,
     GroupRecord,
@@ -11,6 +14,36 @@ from lattice.context import (
     TransitionRecord,
 )
 from lattice.storage.store import save_session
+
+
+def _assign_timestamps(session: TraceSession) -> None:
+    """Assign synthetic started_at/ended_at from created_at + latency_ms.
+
+    Parallel group members get the same start time; sequential actions
+    flow one after another.
+    """
+    base = datetime.fromisoformat(session.created_at)
+    parallel_groups = {
+        g.group_id for g in session.groups if g.group_type == "parallel"
+    }
+    actions = sorted(session.actions, key=lambda a: a.action_index)
+
+    cursor = base
+    for action in actions:
+        action.started_at = cursor.isoformat()
+        action.ended_at = (cursor + timedelta(milliseconds=action.latency_ms)).isoformat()
+        cursor += timedelta(milliseconds=action.latency_ms)
+
+    by_group: dict[str, list[ActionRecord]] = defaultdict(list)
+    for action in actions:
+        if action.group_id in parallel_groups:
+            by_group[action.group_id].append(action)
+
+    for members in by_group.values():
+        earliest = min(datetime.fromisoformat(a.started_at) for a in members)
+        for a in members:
+            a.started_at = earliest.isoformat()
+            a.ended_at = (earliest + timedelta(milliseconds=a.latency_ms)).isoformat()
 
 
 def _trace_deep_research():
@@ -227,6 +260,7 @@ def _trace_deep_research():
         tags=["formatting", "final"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions)")
 
@@ -603,6 +637,7 @@ def _trace_multi_agent_coding_pipeline():
         tags=["deployment", "production"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions, {len(s.groups)} groups)")
 
@@ -822,6 +857,7 @@ def _trace_rag_pipeline():
         tags=["validation", "completeness"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions, {len(s.groups)} groups)")
 
@@ -917,6 +953,7 @@ def _trace_failed_data_pipeline():
         tags=["transform", "load", "partial"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions, {len(s.groups)} groups)")
 
@@ -1228,6 +1265,7 @@ def _trace_agentic_customer_support():
         tags=["send", "crm-update"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions, {len(s.groups)} groups)")
 
@@ -1339,6 +1377,7 @@ def _trace_code_review():
         tags=["summary", "output"],
     ))
 
+    _assign_timestamps(s)
     save_session(s)
     print(f"  Saved: {s.trace_id} ({len(s.actions)} actions, {len(s.groups)} groups)")
 

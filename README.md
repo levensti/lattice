@@ -313,7 +313,7 @@ python -m lattice dashboard --port 3000
 To quickly see the kind of UI Lattice gives you, seed the local SQLite store with rich example traces and open the dashboard:
 
 ```bash
-uv run python scripts/seed_demo.py
+uv run python scripts/seed_sqllite_traces.py
 uv run python -m lattice dashboard
 ```
 

@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Any, Callable, Sequence
 
@@ -60,6 +61,7 @@ def _record_action(
     input_data, output_data, action_index, latency_ms, parent_span_id,
     tags, role=None, group_id=None, iteration=None,
     activation_reason=None, error=None, judge=None,
+    started_at=None, ended_at=None,
 ):
     session.add_action(ActionRecord(
         span_id=span_id,
@@ -77,6 +79,8 @@ def _record_action(
         group_id=group_id,
         iteration=iteration,
         activation_reason=activation_reason,
+        started_at=started_at,
+        ended_at=ended_at,
         judge=judge,
     ))
     if parent_span_id is not None:
@@ -119,13 +123,15 @@ def _begin_action(func, args, kwargs, *, action_id, name, tags, role):
         "action_index": action_index, "topo": topo,
         "parent_token": parent_token,
         "start": time.perf_counter(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 def _complete_action(ctx, *, name, description, goal, tags, role, result, judge=None):
-    """Record a successful action and return the serialized output."""
+    """Record a successful action and score it inline if a JudgeConfig is set."""
     output_str = _safe_serialize(result)
     latency = (time.perf_counter() - ctx["start"]) * 1000
+    ended_at = datetime.now(timezone.utc).isoformat()
     if ctx["session"]:
         _record_action(
             ctx["session"],
@@ -134,8 +140,17 @@ def _complete_action(ctx, *, name, description, goal, tags, role, result, judge=
             input_data=ctx["input_str"], output_data=output_str,
             action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
-            judge=judge, **ctx["topo"],
+            judge=judge, started_at=ctx["started_at"], ended_at=ended_at,
+            **ctx["topo"],
         )
+        # Score inline when the action has a JudgeConfig
+        if judge is not None:
+            action_record = ctx["session"].actions[-1]
+            try:
+                from .judge.scorer import _score_single_action
+                _score_single_action(action_record, judge.provider, judge.system_prompt)
+            except Exception:
+                logger.warning("Inline scoring failed for action %s", name, exc_info=True)
     logger.info("Action completed: %s (%.1fms)", name, latency)
     logger.debug("Action %s output: %s", name, output_str[:500])
 
@@ -143,6 +158,7 @@ def _complete_action(ctx, *, name, description, goal, tags, role, result, judge=
 def _fail_action(ctx, *, name, description, goal, tags, role, exc, judge=None):
     """Record a failed action."""
     latency = (time.perf_counter() - ctx["start"]) * 1000
+    ended_at = datetime.now(timezone.utc).isoformat()
     logger.error("Action failed: %s (%.1fms) — %s", name, latency, exc)
     if ctx["session"]:
         _record_action(
@@ -152,7 +168,9 @@ def _fail_action(ctx, *, name, description, goal, tags, role, exc, judge=None):
             input_data=ctx["input_str"], output_data="",
             action_index=ctx["action_index"], latency_ms=latency,
             parent_span_id=ctx["parent_id"], tags=tags, role=role,
-            error=str(exc), judge=judge, **ctx["topo"],
+            error=str(exc), judge=judge,
+            started_at=ctx["started_at"], ended_at=ended_at,
+            **ctx["topo"],
         )
 
 
@@ -326,6 +344,7 @@ def trace_action(
     topo = _read_topology_context()
     parent_token = _current_span_id.set(span_id)
     start = time.perf_counter()
+    started_at = datetime.now(timezone.utc).isoformat()
 
     input_str = _safe_serialize(input_data) if input_data is not None else ""
     handle = _TraceActionHandle()
@@ -335,6 +354,7 @@ def trace_action(
         yield handle
         output_str = _safe_serialize(handle._output) if handle._output is not None else ""
         latency = (time.perf_counter() - start) * 1000
+        ended_at = datetime.now(timezone.utc).isoformat()
         if session:
             _record_action(
                 session,
@@ -343,11 +363,13 @@ def trace_action(
                 input_data=input_str, output_data=output_str,
                 action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
-                judge=judge, **topo,
+                judge=judge, started_at=started_at, ended_at=ended_at,
+                **topo,
             )
         logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
+        ended_at = datetime.now(timezone.utc).isoformat()
         logger.error("Action failed: %s (%.1fms) — %s", name, latency, exc)
         if session:
             _record_action(
@@ -357,7 +379,9 @@ def trace_action(
                 input_data=input_str, output_data="",
                 action_index=action_index, latency_ms=latency,
                 parent_span_id=parent_id, tags=tags, role=role,
-                error=str(exc), judge=judge, **topo,
+                error=str(exc), judge=judge,
+                started_at=started_at, ended_at=ended_at,
+                **topo,
             )
         raise
     finally:
