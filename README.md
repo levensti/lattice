@@ -7,10 +7,29 @@ Designed to plug into existing codebases with minimal changes — add a few line
 ## Install
 
 ```bash
+uv pip install -e .
+```
+
+Or with pip:
+
+```bash
 pip install -e .
 ```
 
 ## Quick Start
+
+### See it in action
+
+Seed the database with realistic multi-agent traces and explore them in the dashboard:
+
+```bash
+uv run python scripts/seed_demo.py
+uv run python -m lattice dashboard
+```
+
+Open [http://localhost:8787](http://localhost:8787) to browse example traces spanning deep research agents, RAG pipelines, code review workflows, and more.
+
+### Add tracing to your own code
 
 ```python
 from lattice import action, trace_session, score_trace, find_bottlenecks, OpenAIProvider
@@ -262,8 +281,15 @@ lattice.traces(trace_id="abc123")        # specific trace
 Browse traces visually with the built-in local dashboard:
 
 ```bash
-python -m lattice dashboard              # starts at http://localhost:8080
-python -m lattice dashboard --port 3000  # custom port
+uv run python -m lattice dashboard              # starts at http://localhost:8787
+uv run python -m lattice dashboard --port 3000  # custom port
+```
+
+Or without `uv`:
+
+```bash
+python -m lattice dashboard
+python -m lattice dashboard --port 3000
 ```
 
 ### Configuration
