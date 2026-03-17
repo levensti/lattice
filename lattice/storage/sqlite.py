@@ -6,7 +6,7 @@ import json
 import sqlite3
 import threading
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -266,7 +266,7 @@ class SQLiteStore(Store):
         """Persist a completed trace session."""
         conn = self._get_connection()
         if session.created_at is None:
-            session.created_at = datetime.now(UTC).isoformat()
+            session.created_at = datetime.now(timezone.utc).isoformat()
 
         # Snapshot live judge configs before saving
         for action in session.actions:
