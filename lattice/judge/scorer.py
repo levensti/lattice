@@ -30,21 +30,25 @@ def _parse_judge_response(text: str) -> tuple[float, str]:
         data = json.loads(cleaned)
         return float(data["score"]), data.get("explanation", "")
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-        pass
+        logger.debug("JSON parse failed for judge response, trying regex fallbacks")
 
     # Fallback: regex for "score": N
     match = re.search(r'"score"\s*:\s*(\d+(?:\.\d+)?)', text)
     if match:
         score = float(match.group(1))
         exp_match = re.search(r'"explanation"\s*:\s*"([^"]*)"', text)
-        explanation = exp_match.group(1) if exp_match else text
+        explanation = exp_match.group(1) if exp_match else ""
+        logger.debug("Parsed judge score via regex fallback: %.1f", score)
         return score, explanation
 
-    # Fallback: N/5 pattern
-    match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*5", text)
+    # Fallback: N/M pattern (e.g. "3/5", "7/10")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*\d+", text)
     if match:
-        return float(match.group(1)), text
+        score = float(match.group(1))
+        logger.debug("Parsed judge score via N/M fallback: %.1f", score)
+        return score, text
 
+    logger.warning("Could not parse judge response: %s", text[:200])
     return 0.0, f"Could not parse judge response: {text[:200]}"
 
 
@@ -75,7 +79,7 @@ def _score_single_action(
     builder = (config.action_prompt_builder if config else None) or action_prompt_builder
     raw = prov.judge(sys_prompt, _build_prompt_for_action(action, builder))
     action.score, action.score_explanation = _parse_judge_response(raw)
-    logger.info("Scored action: %s → %.1f/5", action.name, action.score)
+    logger.info("Scored action: %s → %.1f", action.name, action.score)
 
 
 async def _async_score_single_action(
@@ -91,7 +95,7 @@ async def _async_score_single_action(
     builder = (config.action_prompt_builder if config else None) or action_prompt_builder
     raw = await prov.ajudge(sys_prompt, _build_prompt_for_action(action, builder))
     action.score, action.score_explanation = _parse_judge_response(raw)
-    logger.info("Scored action: %s → %.1f/5", action.name, action.score)
+    logger.info("Scored action: %s → %.1f", action.name, action.score)
 
 
 def score_trace(
@@ -175,13 +179,14 @@ def score_session(
         goal=session.goal,
         final_output=last_action.output_data,
         workflow_name=session.workflow_name,
+        input_data=session.input_data or "",
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)
     raw = provider.judge(system_prompt, prompt)
     score, explanation = _parse_judge_response(raw)
     session.session_score = score
     session.session_score_explanation = explanation
-    logger.info("Session score: %.1f/5 — %s", score, explanation)
+    logger.info("Session score: %.1f — %s", score, explanation)
     return score, explanation
 
 
@@ -239,25 +244,39 @@ class BackgroundScorer:
         max_concurrency: int = 5,
         system_prompt: str = JUDGE_SYSTEM_PROMPT,
         action_prompt_builder: ActionPromptBuilder | None = None,
+        session_prompt_builder: SessionPromptBuilder | None = None,
+        persist: bool = True,
     ) -> None:
         self._provider = provider
         self._max_concurrency = max_concurrency
         self._system_prompt = system_prompt
         self._action_prompt_builder = action_prompt_builder
+        self._session_prompt_builder = session_prompt_builder
+        self._persist = persist
         self._queue: asyncio.Queue[TraceSession] | None = None
         self._worker_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the background worker. Must be called before :meth:`submit`."""
+        """Start the background worker.
+
+        Called automatically on first :meth:`submit` if not started
+        explicitly. Safe to call multiple times.
+        """
+        if self._queue is not None:
+            return
         self._queue = asyncio.Queue()
         self._worker_task = asyncio.create_task(self._worker())
 
     def submit(self, session: TraceSession) -> None:
-        """Enqueue *session* for background scoring. Non-blocking."""
+        """Enqueue *session* for background scoring. Non-blocking.
+
+        Lazily starts the background worker if :meth:`start` has not
+        been called yet (requires a running event loop).
+        """
         if self._queue is None:
-            raise RuntimeError(
-                "BackgroundScorer not started — call `await scorer.start()` first."
-            )
+            loop = asyncio.get_running_loop()
+            self._queue = asyncio.Queue()
+            self._worker_task = loop.create_task(self._worker())
         self._queue.put_nowait(session)
 
     async def drain(self) -> None:
@@ -306,9 +325,26 @@ class BackgroundScorer:
 
                 await asyncio.gather(*[_bounded(a) for a in scorable])
                 logger.info(
-                    "BackgroundScorer: finished scoring session %s (%d actions)",
-                    session.trace_id, len(scorable),
+                    "BackgroundScorer: finished scoring %d actions for session %s",
+                    len(scorable), session.trace_id,
                 )
+                # Score the session end-to-end if it has a goal
+                if session.goal and session.actions:
+                    await async_score_session(
+                        session,
+                        provider=self._provider,
+                        system_prompt=self._system_prompt,
+                        session_prompt_builder=self._session_prompt_builder,
+                    )
+                if self._persist:
+                    try:
+                        from ..storage.store import save_session
+                        save_session(session)
+                    except Exception:
+                        logger.warning(
+                            "BackgroundScorer: failed to persist scored session %s",
+                            session.trace_id, exc_info=True,
+                        )
             except Exception:
                 logger.exception(
                     "BackgroundScorer: error scoring session %s", session.trace_id
@@ -347,11 +383,12 @@ async def async_score_session(
         goal=session.goal,
         final_output=last_action.output_data,
         workflow_name=session.workflow_name,
+        input_data=session.input_data or "",
     )
     logger.info("Scoring session: %s", session.workflow_name or session.trace_id)
     raw = await provider.ajudge(system_prompt, prompt)
     score, explanation = _parse_judge_response(raw)
     session.session_score = score
     session.session_score_explanation = explanation
-    logger.info("Session score: %.1f/5 — %s", score, explanation)
+    logger.info("Session score: %.1f — %s", score, explanation)
     return score, explanation

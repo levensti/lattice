@@ -4,15 +4,18 @@ import functools
 import inspect
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from contextlib import contextmanager
-from typing import Any, Callable, Sequence
+from contextvars import Token
+from typing import Any, Callable, Sequence, TypedDict
 
 from .context import (
     ActionRecord,
     JudgeConfig,
+    TraceSession,
     TransitionRecord,
     _current_activation_reason,
     _current_group_id,
@@ -26,6 +29,18 @@ logger = logging.getLogger("lattice")
 _SELF_CLS = frozenset(("self", "cls"))
 
 
+class _ActionContext(TypedDict):
+    session: TraceSession | None
+    input_str: str
+    span_id: str
+    parent_id: str | None
+    action_index: int
+    topo: dict[str, Any]
+    parent_token: Token[str | None]
+    start: float
+    started_at: str
+
+
 def _safe_serialize(obj: Any, max_length: int = 8192) -> str:
     """Best-effort JSON serialization with a size cap."""
     try:
@@ -35,6 +50,23 @@ def _safe_serialize(obj: Any, max_length: int = 8192) -> str:
     if len(s) > max_length:
         return s[:max_length] + "...[truncated]"
     return s
+
+
+def _fire_and_forget_score(
+    action_record: ActionRecord,
+    judge: JudgeConfig,
+    name: str,
+) -> None:
+    """Score an action in a daemon thread — never blocks the caller."""
+    def _run() -> None:
+        try:
+            from .judge.scorer import _score_single_action
+            _score_single_action(action_record, judge.provider, judge.system_prompt)
+        except Exception:
+            logger.warning("Background scoring failed for action %s", name, exc_info=True)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
@@ -57,12 +89,27 @@ def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
 
 
 def _record_action(
-    session, *, span_id, name, description, goal,
-    input_data, output_data, action_index, latency_ms, parent_span_id,
-    tags, role=None, group_id=None, iteration=None,
-    activation_reason=None, error=None, judge=None,
-    started_at=None, ended_at=None,
-):
+    session: TraceSession,
+    *,
+    span_id: str,
+    name: str,
+    description: str,
+    goal: str,
+    input_data: str,
+    output_data: str,
+    action_index: int,
+    latency_ms: float,
+    parent_span_id: str | None,
+    tags: Sequence[str],
+    role: str | None = None,
+    group_id: str | None = None,
+    iteration: int | None = None,
+    activation_reason: str | None = None,
+    error: str | None = None,
+    judge: JudgeConfig | None = None,
+    started_at: str | None = None,
+    ended_at: str | None = None,
+) -> None:
     session.add_action(ActionRecord(
         span_id=span_id,
         name=name,
@@ -92,7 +139,7 @@ def _record_action(
         ))
 
 
-def _read_topology_context() -> dict:
+def _read_topology_context() -> dict[str, Any]:
     """Read the current group, iteration, and activation context vars."""
     return {
         "group_id": _current_group_id.get(),
@@ -101,7 +148,16 @@ def _read_topology_context() -> dict:
     }
 
 
-def _begin_action(func, args, kwargs, *, action_id, name, tags, role):
+def _begin_action(
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    *,
+    action_id: str | None,
+    name: str,
+    tags: Sequence[str],
+    role: str | None,
+) -> _ActionContext:
     """Common setup for both sync and async action wrappers.
 
     Returns a dict of context needed by ``_complete_action`` / ``_fail_action``.
@@ -127,7 +183,17 @@ def _begin_action(func, args, kwargs, *, action_id, name, tags, role):
     }
 
 
-def _complete_action(ctx, *, name, description, goal, tags, role, result, judge=None):
+def _complete_action(
+    ctx: _ActionContext,
+    *,
+    name: str,
+    description: str,
+    goal: str,
+    tags: Sequence[str],
+    role: str | None,
+    result: Any,
+    judge: JudgeConfig | None = None,
+) -> None:
     """Record a successful action and score it inline if a JudgeConfig is set."""
     output_str = _safe_serialize(result)
     latency = (time.perf_counter() - ctx["start"]) * 1000
@@ -143,19 +209,25 @@ def _complete_action(ctx, *, name, description, goal, tags, role, result, judge=
             judge=judge, started_at=ctx["started_at"], ended_at=ended_at,
             **ctx["topo"],
         )
-        # Score inline when the action has a JudgeConfig
+        # Score in a background thread so the caller is never blocked
         if judge is not None:
             action_record = ctx["session"].actions[-1]
-            try:
-                from .judge.scorer import _score_single_action
-                _score_single_action(action_record, judge.provider, judge.system_prompt)
-            except Exception:
-                logger.warning("Inline scoring failed for action %s", name, exc_info=True)
+            _fire_and_forget_score(action_record, judge, name)
     logger.info("Action completed: %s (%.1fms)", name, latency)
     logger.debug("Action %s output: %s", name, output_str[:500])
 
 
-def _fail_action(ctx, *, name, description, goal, tags, role, exc, judge=None):
+def _fail_action(
+    ctx: _ActionContext,
+    *,
+    name: str,
+    description: str,
+    goal: str,
+    tags: Sequence[str],
+    role: str | None,
+    exc: BaseException,
+    judge: JudgeConfig | None = None,
+) -> None:
     """Record a failed action."""
     latency = (time.perf_counter() - ctx["start"]) * 1000
     ended_at = datetime.now(timezone.utc).isoformat()
@@ -271,17 +343,24 @@ def action(
         TypeError: If *goal* is not provided.
     """
     if _func is not None and not callable(_func):
+        import warnings
+        warnings.warn(
+            "Passing name as a positional argument to @action is deprecated. "
+            "Use @action(name=\"...\", goal=\"...\") instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if name is not None:
             raise TypeError("Cannot pass both positional and keyword 'name'")
         name = _func
         _func = None
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         actual_name = name if name is not None else func.__name__
-        if not goal:
+        if not goal and judge is not None:
             raise TypeError(
-                f"@action requires a goal — use @action(goal=\"...\") "
-                f"instead of bare @action on '{actual_name}'."
+                f"@action requires a goal when judge is configured — "
+                f"use @action(goal=\"...\", judge=...) on '{actual_name}'."
             )
         return _trace_decorator(actual_name, description, goal, action_id, tags, role, judge)(func)
 
@@ -332,10 +411,10 @@ def trace_action(
         tags: Labels for grouping/filtering.
         input_data: Optional input to record on the action.
     """
-    if not goal:
+    if not goal and judge is not None:
         raise TypeError(
-            f"trace_action requires a goal — use "
-            f"trace_action(\"{name}\", goal=\"...\")."
+            f"trace_action requires a goal when judge is configured — use "
+            f"trace_action(\"{name}\", goal=\"...\", judge=...)."
         )
     session = _current_session.get()
     span_id = uuid.uuid4().hex
@@ -352,6 +431,8 @@ def trace_action(
     logger.info("Action started: %s", name)
     try:
         yield handle
+        if handle._output is None:
+            logger.debug("trace_action(%r): set_output() was not called, recording empty output", name)
         output_str = _safe_serialize(handle._output) if handle._output is not None else ""
         latency = (time.perf_counter() - start) * 1000
         ended_at = datetime.now(timezone.utc).isoformat()
@@ -366,6 +447,9 @@ def trace_action(
                 judge=judge, started_at=started_at, ended_at=ended_at,
                 **topo,
             )
+            if judge is not None:
+                action_record = session.actions[-1]
+                _fire_and_forget_score(action_record, judge, name)
         logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
@@ -424,9 +508,9 @@ def instrument(
         TypeError: If *goal* is not provided.
     """
     actual_name = name or getattr(func, "__name__", repr(func))
-    if not goal:
+    if not goal and judge is not None:
         raise TypeError(
-            f"instrument() requires a goal — use "
-            f"instrument({actual_name}, goal=\"...\")."
+            f"instrument() requires a goal when judge is configured — use "
+            f"instrument({actual_name}, goal=\"...\", judge=...)."
         )
     return _trace_decorator(actual_name, description, goal, None, tags, role, judge)(func)

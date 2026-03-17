@@ -15,35 +15,65 @@ import html
 import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
+from typing import TYPE_CHECKING
 
 from .bottleneck import find_bottlenecks
 from .storage.store import traces
+
+if TYPE_CHECKING:
+    from .context import ActionRecord, GroupRecord, TraceSession
 
 
 # ── score helpers ──────────────────────────────────────────────────────
 
 
+class _ScoreThresholds:
+    """Percentile-based thresholds derived from all scores in the dataset.
+
+    Green = top third (>= p66), Yellow = middle third (>= p33), Red = bottom.
+    Falls back to 0-based linear split if there aren't enough scores.
+    """
+
+    def __init__(self, all_scores: list[float]) -> None:
+        if not all_scores:
+            self.p33 = 0.0
+            self.p66 = 0.0
+            return
+        s = sorted(all_scores)
+        n = len(s)
+        self.p33 = s[max(0, int(n * 0.33) - 1)]
+        self.p66 = s[max(0, int(n * 0.66) - 1)]
+
+    def color(self, score: float) -> str:
+        if score >= self.p66:
+            return "#16a34a"
+        if score >= self.p33:
+            return "#ca8a04"
+        return "#dc2626"
+
+    def pill_cls(self, score: float) -> str:
+        if score >= self.p66:
+            return "pill-green"
+        if score >= self.p33:
+            return "pill-yellow"
+        return "pill-red"
+
+
+# Module-level reference set per render pass
+_thresholds = _ScoreThresholds([])
+
+
 def _score_bar(score: float | None) -> str:
     if score is None:
         return '<span class="score-none">&mdash;</span>'
-    if score >= 4:
-        color = "#16a34a"
-    elif score >= 3:
-        color = "#ca8a04"
-    else:
-        color = "#dc2626"
-    return f'<span class="score" style="color:{color}">{score:.1f}<span class="score-max">/5</span></span>'
+    color = _thresholds.color(score)
+    return f'<span class="score" style="color:{color}">{score:.1f}</span>'
 
 
 def _score_pill(score: float | None) -> str:
     if score is None:
         return ""
-    if score >= 4:
-        cls = "pill-green"
-    elif score >= 3:
-        cls = "pill-yellow"
-    else:
-        cls = "pill-red"
+    cls = _thresholds.pill_cls(score)
     return f'<span class="score-pill {cls}">{score:.1f}</span>'
 
 
@@ -66,7 +96,7 @@ def _expandable(content: str, max_preview: int = 100) -> str:
 # ── evaluation section (judge config + results) ──────────────────────
 
 
-def _judge_model_badge(judge_config) -> str:
+def _judge_model_badge(judge_config: dict[str, object] | None) -> str:
     """Render a compact badge showing the judge model, e.g. 'gpt-4o'."""
     if not judge_config:
         return ""
@@ -76,7 +106,7 @@ def _judge_model_badge(judge_config) -> str:
     return f'<span class="judge-badge">{html.escape(model)}</span>'
 
 
-def _rubric_section(judge_config) -> str:
+def _rubric_section(judge_config: dict[str, object] | None) -> str:
     """Render expandable rubric if judge config has a system prompt."""
     if not judge_config:
         return ""
@@ -142,14 +172,14 @@ def _time_range(started_at: str | None, ended_at: str | None) -> str:
     return f'<div class="hnode-time-range">{start_fmt} → …</div>'
 
 
-def _render_node_card(action) -> str:
+def _render_node_card(action: ActionRecord) -> str:
     """Render a compact card for a single action node."""
     name_esc = html.escape(_clean_name(action.name))
     role = _role_badge(action.role)
     dot = _status_dot(action.error)
     latency = _latency_fmt(action.latency_ms)
     score = _score_pill(action.score)
-    judge_config = getattr(action, "judge_config", None)
+    judge_config = action.judge_config
     judge_badge = _judge_model_badge(judge_config)
 
     error_html = ""
@@ -157,7 +187,7 @@ def _render_node_card(action) -> str:
         error_html = f'<div class="hnode-error">{html.escape(action.error[:200])}</div>'
 
     tags_html = ""
-    if getattr(action, "tags", []):
+    if action.tags:
         tags_html = '<div class="hnode-tags">' + " ".join(
             f'<span class="tag">{html.escape(t)}</span>' for t in action.tags
         ) + "</div>"
@@ -179,7 +209,7 @@ def _render_node_card(action) -> str:
             )
         io_html = f'<div class="hnode-io">{"".join(io_parts)}</div>'
 
-    time_html = _time_range(getattr(action, "started_at", None), getattr(action, "ended_at", None))
+    time_html = _time_range(action.started_at, action.ended_at)
 
     err_cls = " hnode-err" if action.error else ""
     return (
@@ -197,14 +227,14 @@ def _render_node_card(action) -> str:
     )
 
 
-def _build_h_tree(actions, groups=None) -> str:
+def _build_h_tree(actions: list[ActionRecord], groups: list[GroupRecord] | None = None) -> str:
     """Build horizontal left-to-right process tree from actions."""
     if not actions:
         return '<div class="muted">No actions</div>'
     groups = groups or []
     group_map = {g.group_id: g for g in groups}
     span_ids = {a.span_id for a in actions}
-    by_parent: dict[str, list] = {}
+    by_parent: dict[str, list[ActionRecord]] = {}
     roots = []
     for a in actions:
         if a.parent_span_id is None or a.parent_span_id not in span_ids:
@@ -212,7 +242,7 @@ def _build_h_tree(actions, groups=None) -> str:
         else:
             by_parent.setdefault(a.parent_span_id, []).append(a)
 
-    def render_subtree(action) -> str:
+    def render_subtree(action: ActionRecord) -> str:
         card = _render_node_card(action)
         children = by_parent.get(action.span_id, [])
         if not children:
@@ -270,7 +300,7 @@ def _build_h_tree(actions, groups=None) -> str:
 # ── trace detail ───────────────────────────────────────────────────────
 
 
-def _build_trace_detail(session) -> str:
+def _build_trace_detail(session: TraceSession) -> str:
     tree_html = _build_h_tree(session.actions, session.groups)
     total_ms = sum(s.latency_ms for s in session.actions)
     action_count = len(session.actions)
@@ -317,7 +347,7 @@ def _build_trace_detail(session) -> str:
 # ── sidebar ────────────────────────────────────────────────────────────
 
 
-def _build_trace_list_item(session, is_active: bool = False) -> str:
+def _build_trace_list_item(session: TraceSession, is_active: bool = False) -> str:
     name = html.escape(session.workflow_name or "Unnamed")
     action_count = len(session.actions)
     score = _score_pill(session.session_score)
@@ -349,7 +379,7 @@ _IMPACT_COLORS = {
 }
 
 
-def _build_bottleneck_section(session) -> str:
+def _build_bottleneck_section(session: TraceSession) -> str:
     bottlenecks = find_bottlenecks(session)
     if not bottlenecks:
         return ""
@@ -898,7 +928,18 @@ tr:hover td { background: var(--surface-2); }
 
 
 def _render_page(trace_id: str | None = None) -> str:
+    global _thresholds
     all_traces = traces()
+
+    # Compute score thresholds from all scores in the dataset
+    all_scores: list[float] = []
+    for t in all_traces:
+        if t.session_score is not None:
+            all_scores.append(t.session_score)
+        for a in t.actions:
+            if a.score is not None:
+                all_scores.append(a.score)
+    _thresholds = _ScoreThresholds(all_scores)
 
     active_id = trace_id
     if not active_id and all_traces:
@@ -947,7 +988,7 @@ def _render_page(trace_id: str | None = None) -> str:
 
 class _DashboardHandler(BaseHTTPRequestHandler):
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/traces":
@@ -963,7 +1004,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_json(self):
+    def _serve_json(self) -> None:
         all_traces = traces()
         data = [t.to_dict() for t in all_traces]
         body = json.dumps(data, indent=2).encode()
@@ -973,7 +1014,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
 

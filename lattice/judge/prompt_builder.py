@@ -18,18 +18,6 @@ JUDGE_SYSTEM_PROMPT = (
 
 MAX_FIELD_CHARS = 4000
 
-RATING_SCALE = (
-    "  1 = Completely fails the goal\n"
-    "  2 = Major issues, mostly unusable\n"
-    "  3 = Acceptable but with notable gaps\n"
-    "  4 = Good with only minor issues\n"
-    "  5 = Excellent, fully meets the goal\n"
-)
-
-RESPONSE_FORMAT = (
-    'Respond with JSON only: {"reasoning": "<think step by step>", "score": <1-5>, "explanation": "<one or two sentences>"}'
-)
-
 
 class ActionPromptBuilder(Protocol):
     """Callable that builds the user prompt for judging a single action."""
@@ -54,6 +42,7 @@ class SessionPromptBuilder(Protocol):
         goal: str,
         final_output: str,
         workflow_name: str,
+        input_data: str,
     ) -> str: ...
 
 
@@ -83,13 +72,16 @@ def build_session_judge_prompt(
     goal: str,
     final_output: str,
     workflow_name: str = "",
+    input_data: str = "",
 ) -> str:
     """Build the user prompt for judging the overall session outcome."""
     name_line = f"**Workflow:** {workflow_name}\n" if workflow_name else ""
+    input_line = f"**Workflow input:**\n{input_data[:MAX_FIELD_CHARS]}\n\n" if input_data else ""
 
     return (
         f"Evaluate whether the following workflow achieved its goal.\n\n"
         f"{name_line}"
         f"**Goal:** {goal}\n\n"
+        f"{input_line}"
         f"**Final output:**\n{final_output[:MAX_FIELD_CHARS]}"
     )
