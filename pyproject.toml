@@ -23,5 +23,8 @@ demo = [
     "openai>=1.0",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["lattice"]
