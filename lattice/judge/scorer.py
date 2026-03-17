@@ -201,7 +201,9 @@ class BackgroundScorer:
     immediately (un-scored sessions stay in SQLite for offline scoring)::
 
         # ── app startup (once) ──────────────────────────────
-        scorer = BackgroundScorer(provider=OpenAIProvider("gpt-4o"))
+        scorer = BackgroundScorer(
+            provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]),
+        )
         await scorer.start()
 
         # ── per-request hot path (many times) ───────────────
@@ -216,7 +218,9 @@ class BackgroundScorer:
 
     Or as an async context manager scoped to the application lifetime::
 
-        async with BackgroundScorer(provider=OpenAIProvider("gpt-4o")) as scorer:
+        async with BackgroundScorer(
+            provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]),
+        ) as scorer:
             await serve_forever(scorer)   # submit() inside each request
         # cancel() called automatically on exit — does not block
 
