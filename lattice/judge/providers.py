@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC
 from enum import Enum
+from typing import Any
 
 import httpx
 
@@ -67,6 +68,16 @@ class InferenceProvider(ABC):
             )
         return super().__new__(cls)
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if not hasattr(cls, "api_type") and cls.__init__ is InferenceProvider.__init__:
+            return
+        if hasattr(cls, "api_type") and not isinstance(cls.api_type, ApiType):
+            raise TypeError(
+                f"{cls.__name__}.api_type must be an ApiType enum value, "
+                f"got {cls.api_type!r}"
+            )
+
     # ── Public dispatch ──────────────────────────────────────────────
 
     def judge(self, system_prompt: str, user_prompt: str) -> str:
@@ -81,6 +92,8 @@ class InferenceProvider(ABC):
                 return self._responses(system_prompt, user_prompt)
             case ApiType.MESSAGES:
                 return self._messages(system_prompt, user_prompt)
+            case _:
+                raise ValueError(f"Unsupported api_type: {self.api_type!r}")
 
     async def ajudge(self, system_prompt: str, user_prompt: str) -> str:
         """Send a judge request asynchronously and return the response text.
@@ -94,6 +107,8 @@ class InferenceProvider(ABC):
                 return await self._aresponses(system_prompt, user_prompt)
             case ApiType.MESSAGES:
                 return await self._amessages(system_prompt, user_prompt)
+            case _:
+                raise ValueError(f"Unsupported api_type: {self.api_type!r}")
 
     # ── Per-API-type methods (override the ones your provider supports) ──
 
@@ -222,8 +237,8 @@ class OpenAIProvider(InferenceProvider):
 
     # ── Chat Completions ─────────────────────────────────────────────
 
-    def _cc_payload(self, system_prompt: str, user_prompt: str) -> dict:
-        payload: dict = {
+    def _cc_payload(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -258,8 +273,8 @@ class OpenAIProvider(InferenceProvider):
 
     # ── Responses ────────────────────────────────────────────────────
 
-    def _responses_payload(self, system_prompt: str, user_prompt: str) -> dict:
-        payload: dict = {
+    def _responses_payload(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "instructions": system_prompt,
             "input": user_prompt,
@@ -328,8 +343,8 @@ class AnthropicProvider(InferenceProvider):
             "Content-Type": "application/json",
         }
 
-    def _messages_payload(self, system_prompt: str, user_prompt: str) -> dict:
-        payload: dict = {
+    def _messages_payload(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}],
@@ -402,8 +417,8 @@ class OpenRouterProvider(InferenceProvider):
             "Content-Type": "application/json",
         }
 
-    def _cc_payload(self, system_prompt: str, user_prompt: str) -> dict:
-        payload: dict = {
+    def _cc_payload(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},

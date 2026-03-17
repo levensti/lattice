@@ -274,10 +274,16 @@ async def test_background_scorer_skips_errored_steps():
 
 
 @pytest.mark.asyncio
-async def test_background_scorer_submit_before_start_raises():
-    scorer = BackgroundScorer(provider=_fake_provider())
-    with pytest.raises(RuntimeError, match="not started"):
-        scorer.submit(TraceSession(goal="test"))
+async def test_background_scorer_submit_lazy_starts():
+    """submit() should lazily start the worker instead of raising."""
+    prov = _fake_provider()
+    scorer = BackgroundScorer(provider=prov)
+    session = TraceSession(goal="test")
+    session.add_action(_make_action())
+    scorer.submit(session)
+    await scorer.drain()
+    await scorer.cancel()
+    prov.ajudge.assert_called_once()
 
 
 @pytest.mark.asyncio

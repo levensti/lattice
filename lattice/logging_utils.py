@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from .context import TraceSession
+from .context import ActionRecord, TraceSession, TransitionRecord
 
 logger = logging.getLogger("lattice")
 
@@ -18,16 +18,16 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-def _build_tree(actions):
+def _build_tree(actions: list[ActionRecord]) -> tuple[list[ActionRecord], dict[str | None, list[ActionRecord]]]:
     """Build a parent_span_id -> children mapping and return root actions."""
-    children: dict[str | None, list] = {}
+    children: dict[str | None, list[ActionRecord]] = {}
     for s in actions:
         children.setdefault(s.parent_span_id, []).append(s)
     roots = children.get(None, [])
     return roots, children
 
 
-def _format_action_line(s) -> str:
+def _format_action_line(s: ActionRecord) -> str:
     status = "ERROR" if s.error else "OK"
     score_str = f"{s.score:.1f}/5" if s.score is not None else "-"
     parts = [f"{s.name}  {status}  {s.latency_ms:.0f}ms  score={score_str}"]
@@ -40,7 +40,7 @@ def _format_action_line(s) -> str:
     return "  ".join(parts)
 
 
-def _print_tree(node, children, prefix="", is_last=True):
+def _print_tree(node: ActionRecord, children: dict[str | None, list[ActionRecord]], prefix: str = "", is_last: bool = True) -> None:
     connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
     print(f"{prefix}{connector}{_format_action_line(node)}")
     if node.error:
@@ -102,7 +102,7 @@ def print_trace_summary(session: TraceSession) -> None:
                 print(f"    {symbol} {g.name} ({action_count} branches)")
 
     if session.transitions:
-        merged: dict[tuple, object] = {}
+        merged: dict[tuple[str | None, str], TransitionRecord] = {}
         for t in session.transitions:
             key = (t.from_span_id, t.to_name)
             existing = merged.get(key)

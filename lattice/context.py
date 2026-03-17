@@ -3,13 +3,13 @@ from __future__ import annotations
 import contextvars
 import logging
 import uuid
-from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from .judge.prompt_builder import ActionPromptBuilder
     from .judge.providers import InferenceProvider
 
 GroupType = Literal["loop", "parallel"]
@@ -94,7 +94,7 @@ Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "...
         *,
         system_prompt: str,
         provider: InferenceProvider,
-        action_prompt_builder: Callable | None = None,
+        action_prompt_builder: ActionPromptBuilder | None = None,
     ) -> None:
         self.system_prompt = system_prompt
         self.provider = provider
@@ -207,15 +207,15 @@ class TraceSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the session to a plain dict (suitable for JSON)."""
-        # Snapshot serializable judge config summaries before asdict
-        for action in self.actions:
-            if action.judge is not None and action.judge_config is None:
-                action.judge_config = _judge_config_summary(action.judge)
         d = asdict(self)
         d.pop("_action_counter", None)
-        # judge contains non-serializable objects (callables, provider instances);
-        # strip it — judge_config (serializable summary) is persisted instead.
-        for action_dict in d.get("actions", []):
+        for action, action_dict in zip(self.actions, d.get("actions", [])):
+            # Snapshot judge config summary into the dict copy (not the
+            # original ActionRecord) so serialization has no side effects.
+            if action.judge is not None and action_dict.get("judge_config") is None:
+                action_dict["judge_config"] = _judge_config_summary(action.judge)
+            # judge contains non-serializable objects (callables, provider
+            # instances); strip it — judge_config is persisted instead.
             action_dict.pop("judge", None)
         return d
 

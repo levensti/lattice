@@ -17,6 +17,17 @@ from .providers import InferenceProvider
 logger = logging.getLogger("lattice")
 
 
+def _clamp_score(score: float) -> float:
+    """Clamp a parsed score to the valid [1, 5] range."""
+    if score < 1:
+        logger.warning("Judge returned score %.2f (below 1), clamping to 1.0", score)
+        return 1.0
+    if score > 5:
+        logger.warning("Judge returned score %.2f (above 5), clamping to 5.0", score)
+        return 5.0
+    return score
+
+
 def _parse_judge_response(text: str) -> tuple[float, str]:
     """Extract (score, explanation) from the judge LLM's response."""
     cleaned = text.strip()
@@ -28,23 +39,27 @@ def _parse_judge_response(text: str) -> tuple[float, str]:
     # Attempt structured JSON parse
     try:
         data = json.loads(cleaned)
-        return float(data["score"]), data.get("explanation", "")
+        return _clamp_score(float(data["score"])), data.get("explanation", "")
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-        pass
+        logger.debug("JSON parse failed for judge response, trying regex fallbacks")
 
     # Fallback: regex for "score": N
     match = re.search(r'"score"\s*:\s*(\d+(?:\.\d+)?)', text)
     if match:
-        score = float(match.group(1))
+        score = _clamp_score(float(match.group(1)))
         exp_match = re.search(r'"explanation"\s*:\s*"([^"]*)"', text)
-        explanation = exp_match.group(1) if exp_match else text
+        explanation = exp_match.group(1) if exp_match else ""
+        logger.debug("Parsed judge score via regex fallback: %.1f", score)
         return score, explanation
 
     # Fallback: N/5 pattern
     match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*5", text)
     if match:
-        return float(match.group(1)), text
+        score = _clamp_score(float(match.group(1)))
+        logger.debug("Parsed judge score via N/5 fallback: %.1f", score)
+        return score, text
 
+    logger.warning("Could not parse judge response: %s", text[:200])
     return 0.0, f"Could not parse judge response: {text[:200]}"
 
 
@@ -248,16 +263,26 @@ class BackgroundScorer:
         self._worker_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the background worker. Must be called before :meth:`submit`."""
+        """Start the background worker.
+
+        Called automatically on first :meth:`submit` if not started
+        explicitly. Safe to call multiple times.
+        """
+        if self._queue is not None:
+            return
         self._queue = asyncio.Queue()
         self._worker_task = asyncio.create_task(self._worker())
 
     def submit(self, session: TraceSession) -> None:
-        """Enqueue *session* for background scoring. Non-blocking."""
+        """Enqueue *session* for background scoring. Non-blocking.
+
+        Lazily starts the background worker if :meth:`start` has not
+        been called yet (requires a running event loop).
+        """
         if self._queue is None:
-            raise RuntimeError(
-                "BackgroundScorer not started — call `await scorer.start()` first."
-            )
+            loop = asyncio.get_running_loop()
+            self._queue = asyncio.Queue()
+            self._worker_task = loop.create_task(self._worker())
         self._queue.put_nowait(session)
 
     async def drain(self) -> None:
