@@ -20,5 +20,11 @@ dev = [
     "pytest-asyncio>=0.21",
 ]
 
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["lattice"]
