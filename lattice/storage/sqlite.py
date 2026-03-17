@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS actions (
     iteration         INTEGER,
     activation_reason TEXT,
     judge_config      TEXT,
+    started_at        TEXT,
+    ended_at          TEXT,
     judge_provider    TEXT,
     judge_model       TEXT,
     PRIMARY KEY (trace_id, span_id)
@@ -141,124 +143,12 @@ class SQLiteStore(Store):
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
 
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version == 0:
-            has_data_col = any(
-                col[1] == "data"
-                for col in conn.execute("PRAGMA table_info(traces)").fetchall()
-            )
-            if has_data_col:
-                self._migrate_v0_to_v2(conn)
-            else:
-                conn.executescript(_SCHEMA_V2)
-                conn.execute("PRAGMA user_version = 2")
-        # version >= 2: already up-to-date
+        conn.executescript(_SCHEMA_V2)
 
         conn.execute("PRAGMA foreign_keys=ON")
         self._local.conn = conn
         self._local.path = self._db_path
         return conn
-
-    # ── migration ──────────────────────────────────────────────────────
-
-    def _migrate_v0_to_v2(self, conn: sqlite3.Connection) -> None:
-        """Migrate from v0 (single JSON blob) to v2 (normalized tables)."""
-        rows = conn.execute(
-            "SELECT trace_id, workflow_name, goal, session_score, "
-            "score_explanation, data, created_at FROM traces"
-        ).fetchall()
-
-        conn.execute("ALTER TABLE traces RENAME TO _traces_old")
-        conn.executescript(_SCHEMA_V2)
-
-        for trace_id, wf, goal, score, expl, data_json, created_at in rows:
-            conn.execute(
-                "INSERT INTO traces (trace_id, workflow_name, goal, "
-                "session_score, session_score_explanation, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (trace_id, wf, goal, score, expl, created_at),
-            )
-            data = json.loads(data_json)
-            self._insert_children_from_dict(conn, trace_id, data)
-
-        conn.execute("DROP TABLE _traces_old")
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-
-    def _insert_children_from_dict(
-        self, conn: sqlite3.Connection, trace_id: str, data: dict[str, Any]
-    ) -> None:
-        """Insert child rows (actions, tags, judge_results, groups, transitions) from a parsed JSON blob."""
-        for a in data.get("actions", []):
-            a.pop("judge", None)
-            judge_result = a.pop("judge_result", None)
-            # Backward compat: old format had judge_results list
-            if judge_result is None:
-                old_list = a.pop("judge_results", [])
-                if old_list:
-                    judge_result = old_list[0]
-            jc = a.get("judge_config")
-            jc_json = json.dumps(jc) if jc else None
-            conn.execute(
-                "INSERT INTO actions (trace_id, span_id, name, description, "
-                "goal, input_data, output_data, action_index, latency_ms, "
-                "parent_span_id, score, score_explanation, error, role, "
-                "group_id, iteration, activation_reason, judge_config, "
-                "judge_provider, judge_model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    trace_id,
-                    a.get("span_id"),
-                    a.get("name"),
-                    a.get("description", ""),
-                    a.get("goal", ""),
-                    a.get("input_data", ""),
-                    a.get("output_data", ""),
-                    a.get("action_index"),
-                    a.get("latency_ms"),
-                    a.get("parent_span_id"),
-                    a.get("score"),
-                    a.get("score_explanation"),
-                    a.get("error"),
-                    a.get("role"),
-                    a.get("group_id"),
-                    a.get("iteration"),
-                    a.get("activation_reason"),
-                    jc_json,
-                    jc.get("provider") if jc else None,
-                    str(jc.get("model")) if jc and jc.get("model") is not None else None,
-                ),
-            )
-            span_id = a["span_id"]
-            for tag in a.get("tags", []):
-                conn.execute(
-                    "INSERT INTO action_tags (trace_id, span_id, tag) "
-                    "VALUES (?, ?, ?)",
-                    (trace_id, span_id, tag),
-                )
-            if judge_result:
-                jr = judge_result
-                conn.execute(
-                    "INSERT INTO judge_results (trace_id, span_id, "
-                    "result_index, score, explanation, name, model) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (trace_id, span_id, 0, jr["score"], jr["explanation"], jr["name"], jr["model"]),
-                )
-
-        for g in data.get("groups", []):
-            conn.execute(
-                "INSERT INTO groups (trace_id, group_id, group_type, name, "
-                "parent_span_id) VALUES (?, ?, ?, ?, ?)",
-                (trace_id, g["group_id"], g["group_type"], g["name"], g.get("parent_span_id")),
-            )
-
-        for i, t in enumerate(data.get("transitions", [])):
-            conn.execute(
-                "INSERT INTO transitions (trace_id, transition_index, "
-                "from_span_id, to_name, reason, auto) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (trace_id, i, t.get("from_span_id"), t["to_name"], t.get("reason", ""), int(t.get("auto", False))),
-            )
 
     # ── Store interface ───────────────────────────────────────────────
 
@@ -296,9 +186,9 @@ class SQLiteStore(Store):
                 "INSERT INTO actions (trace_id, span_id, name, description, "
                 "goal, input_data, output_data, action_index, latency_ms, "
                 "parent_span_id, score, score_explanation, error, role, "
-                "group_id, iteration, activation_reason, judge_config, "
-                "judge_provider, judge_model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "group_id, iteration, activation_reason, started_at, ended_at, "
+                "judge_config, judge_provider, judge_model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.trace_id,
                     a.span_id,
@@ -317,6 +207,8 @@ class SQLiteStore(Store):
                     a.group_id,
                     a.iteration,
                     a.activation_reason,
+                    a.started_at,
+                    a.ended_at,
                     jc_json,
                     jc.get("provider") if jc else None,
                     str(jc.get("model")) if jc and jc.get("model") is not None else None,
@@ -394,7 +286,8 @@ class SQLiteStore(Store):
             f"SELECT trace_id, span_id, name, description, goal, "
             f"input_data, output_data, action_index, latency_ms, "
             f"parent_span_id, score, score_explanation, error, role, "
-            f"group_id, iteration, activation_reason, judge_config "
+            f"group_id, iteration, activation_reason, started_at, ended_at, "
+            f"judge_config "
             f"FROM actions WHERE trace_id IN ({ph}) ORDER BY action_index",
             trace_ids,
         ).fetchall()
@@ -438,7 +331,7 @@ class SQLiteStore(Store):
         actions_by_trace: dict[str, list[ActionRecord]] = defaultdict(list)
         for row in action_rows:
             tid, sid = row[0], row[1]
-            jc_json = row[17]
+            jc_json = row[19]
             actions_by_trace[tid].append(
                 ActionRecord(
                     span_id=sid,
@@ -457,6 +350,8 @@ class SQLiteStore(Store):
                     group_id=row[14],
                     iteration=row[15],
                     activation_reason=row[16],
+                    started_at=row[17],
+                    ended_at=row[18],
                     judge_config=json.loads(jc_json) if jc_json else None,
                     tags=tags_by_action[(tid, sid)],
                     judge_result=jr_by_action.get((tid, sid)),

@@ -10,7 +10,7 @@ import httpx
 
 logger = logging.getLogger("lattice")
 
-_DEFAULT_TIMEOUT = 60.0
+_DEFAULT_TIMEOUT = 120.0
 
 
 class ApiType(Enum):
@@ -196,7 +196,7 @@ class OpenAIProvider(InferenceProvider):
         api_base: str = "https://api.openai.com/v1",
         api_type: ApiType = ApiType.CHAT_COMPLETIONS,
         timeout: float = _DEFAULT_TIMEOUT,
-        temperature: float = 0.1,
+        temperature: float | None = None,
         top_p: float | None = None,
     ):
         if api_type not in self._SUPPORTED:
@@ -229,8 +229,9 @@ class OpenAIProvider(InferenceProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": self.temperature,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         return payload
@@ -262,8 +263,9 @@ class OpenAIProvider(InferenceProvider):
             "model": self.model,
             "instructions": system_prompt,
             "input": user_prompt,
-            "temperature": self.temperature,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         return payload
@@ -381,7 +383,7 @@ class OpenRouterProvider(InferenceProvider):
         *,
         api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,
-        temperature: float = 0.1,
+        temperature: float | None = 0.1,
         top_p: float | None = None,
     ):
         if not api_key:
@@ -407,8 +409,9 @@ class OpenRouterProvider(InferenceProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": self.temperature,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         return payload

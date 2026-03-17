@@ -123,6 +123,25 @@ def _clean_name(name: str) -> str:
     return name
 
 
+def _fmt_iso_time(iso: str) -> str:
+    """Extract HH:MM:SS from an ISO 8601 timestamp."""
+    try:
+        t_idx = iso.index("T")
+        return iso[t_idx + 1 : t_idx + 9]
+    except (ValueError, IndexError):
+        return iso[:19]
+
+
+def _time_range(started_at: str | None, ended_at: str | None) -> str:
+    if not started_at:
+        return ""
+    start_fmt = _fmt_iso_time(started_at)
+    if ended_at:
+        end_fmt = _fmt_iso_time(ended_at)
+        return f'<div class="hnode-time-range">{start_fmt} → {end_fmt}</div>'
+    return f'<div class="hnode-time-range">{start_fmt} → …</div>'
+
+
 def _render_node_card(action) -> str:
     """Render a compact card for a single action node."""
     name_esc = html.escape(_clean_name(action.name))
@@ -160,6 +179,8 @@ def _render_node_card(action) -> str:
             )
         io_html = f'<div class="hnode-io">{"".join(io_parts)}</div>'
 
+    time_html = _time_range(getattr(action, "started_at", None), getattr(action, "ended_at", None))
+
     err_cls = " hnode-err" if action.error else ""
     return (
         f'<div class="hnode{err_cls}">'
@@ -167,6 +188,7 @@ def _render_node_card(action) -> str:
         f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span>{role}</div>'
         f'</div>'
         f'<div class="hnode-meta-row">{score}{judge_badge}<span class="hnode-latency">{latency}</span></div>'
+        f'{time_html}'
         f'{error_html}'
         f'{tags_html}'
         f'{rubric_html}'
@@ -673,6 +695,13 @@ body {
     font-size: 11px;
     color: var(--text-muted);
     font-family: "SF Mono", "Fira Code", monospace;
+}
+.hnode-time-range {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: "SF Mono", "Fira Code", monospace;
+    margin-top: 2px;
+    opacity: 0.8;
 }
 
 .hnode-error {

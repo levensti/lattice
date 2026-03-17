@@ -128,6 +128,8 @@ class ActionRecord:
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
     # Per-action judge config — live object, not persisted (stripped in to_dict)
     judge: JudgeConfig | None = field(default=None, compare=False)
     # Serializable summary of judge config — persisted
@@ -433,6 +435,8 @@ def trace_session(
     workflow_name: str = "",
     goal: str,
     persist: bool = True,
+    judge: "InferenceProvider | None" = None,
+    judge_system_prompt: str | None = None,
 ):
     """Context manager that groups ``@action``-decorated calls into a single trace.
 
@@ -443,6 +447,14 @@ def trace_session(
             for session-level scoring via :func:`score_session`.
         persist: If ``True`` (default), automatically save the completed
             session to the local SQLite store when the context exits.
+        judge: Optional :class:`~lattice.judge.providers.InferenceProvider`.
+            When set, the full trajectory is scored on exit — evaluating
+            the session's final output against its *goal* — before
+            persisting. Per-action scoring is handled by each action's
+            own :class:`JudgeConfig`; this param controls the
+            session-level (end-to-end) score only.
+        judge_system_prompt: Override the default judge system prompt for
+            session-level scoring. Only used when *judge* is set.
     """
     session = TraceSession(
         trace_id=trace_id or uuid.uuid4().hex,
@@ -457,6 +469,22 @@ def trace_session(
     finally:
         _current_session.reset(session_token)
         _current_span_id.reset(span_token)
+
+        # Score the end-to-end trajectory if a judge provider is configured
+        if judge is not None and session.goal and session.actions:
+            try:
+                from .judge.scorer import score_session as _score_session
+                from .judge.prompt_builder import JUDGE_SYSTEM_PROMPT
+
+                sys_prompt = judge_system_prompt or JUDGE_SYSTEM_PROMPT
+                _score_session(session, provider=judge, system_prompt=sys_prompt)
+            except Exception:
+                logger.warning(
+                    "Session-level scoring failed for trace %s",
+                    session.trace_id,
+                    exc_info=True,
+                )
+
         if persist:
             try:
                 from .storage.store import save_session
