@@ -7,6 +7,12 @@ Designed to plug into existing codebases with minimal changes — add a few line
 ## Install
 
 ```bash
+uv pip install -e .
+```
+
+Or with pip:
+
+```bash
 pip install -e .
 ```
 
@@ -96,7 +102,7 @@ with trace_session(goal="Find and summarize relevant results") as session:
 | Evaluator-optimizer        | `trace_iterations` with `role="generator"` / `"evaluator"` | `eval_optimizer_example.py` |
 | Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                           |
 | Thread-based parallelism   | `copy_trace_context()`                                     | —                           |
-| Retrofitting existing code | `instrument()` + `trace_action`                             | `retrofit_example.py`       |
+| Retrofitting existing code | `instrument()` + `trace_action`                            | `retrofit_example.py`       |
 
 ## Scoring
 
@@ -114,11 +120,11 @@ Each provider reads its API key from the standard environment variable (`OPENAI_
 
 ### Providers
 
-| Class                | Wire protocol      | Env var              |
-| -------------------- | ------------------ | -------------------- |
+| Class                | Wire protocol                 | Env var              |
+| -------------------- | ----------------------------- | -------------------- |
 | `OpenAIProvider`     | Chat Completions or Responses | `OPENAI_API_KEY`     |
-| `AnthropicProvider`  | Messages           | `ANTHROPIC_API_KEY`  |
-| `OpenRouterProvider` | Chat Completions   | `OPENROUTER_API_KEY` |
+| `AnthropicProvider`  | Messages                      | `ANTHROPIC_API_KEY`  |
+| `OpenRouterProvider` | Chat Completions              | `OPENROUTER_API_KEY` |
 
 Each provider's wire protocol is controlled by the `ApiType` enum. `OpenAIProvider` defaults to `CHAT_COMPLETIONS` but also supports the newer `RESPONSES` API:
 
@@ -163,11 +169,11 @@ score_trace(session, provider=MyProvider())
 
 The `api_type` determines which internal method `judge()` / `ajudge()` dispatches to:
 
-| `ApiType`            | Sync method             | Async method              |
-| -------------------- | ----------------------- | ------------------------- |
-| `CHAT_COMPLETIONS`   | `_chat_completions()`   | `_achat_completions()`    |
-| `RESPONSES`          | `_responses()`          | `_aresponses()`           |
-| `MESSAGES`           | `_messages()`           | `_amessages()`            |
+| `ApiType`          | Sync method           | Async method           |
+| ------------------ | --------------------- | ---------------------- |
+| `CHAT_COMPLETIONS` | `_chat_completions()` | `_achat_completions()` |
+| `RESPONSES`        | `_responses()`        | `_aresponses()`        |
+| `MESSAGES`         | `_messages()`         | `_amessages()`         |
 
 ### Custom rubric per action
 
@@ -262,9 +268,27 @@ lattice.traces(trace_id="abc123")        # specific trace
 Browse traces visually with the built-in local dashboard:
 
 ```bash
-python -m lattice dashboard              # starts at http://localhost:8080
-python -m lattice dashboard --port 3000  # custom port
+uv run python -m lattice dashboard              # starts at http://localhost:8080
+uv run python -m lattice dashboard --port 3000  # custom port
 ```
+
+Or without `uv`:
+
+```bash
+python -m lattice dashboard
+python -m lattice dashboard --port 3000
+```
+
+### Demo data (quickstart)
+
+To quickly see the kind of UI Lattice gives you, seed the local SQLite store with rich example traces and open the dashboard:
+
+```bash
+uv run python scripts/seed_demo.py
+uv run python -m lattice dashboard
+```
+
+Then visit [http://localhost:8080](http://localhost:8080) to explore deep multi-agent workflows, RAG pipelines, code review traces, and complex customer support flows.
 
 ### Configuration
 
