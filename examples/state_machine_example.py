@@ -8,8 +8,6 @@ Usage:
     python examples/state_machine_example.py
 """
 
-import lattice
-
 from lattice.context import trace_session, trace_transition
 from lattice.decorators import action
 
@@ -56,7 +54,6 @@ def router(state: dict) -> dict:
 
 
 def main():
-    lattice.configure(db_path="./.lattice/traces.db")
     print("--- Valid input ---")
     with trace_session(workflow_name="State Machine (valid)", goal="Process the input record through validation, enrichment, and persistence") as session:
         result = router({"step": "start", "data": {"name": "Alice", "email": "alice@example.com"}})

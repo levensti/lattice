@@ -7,8 +7,6 @@ Usage:
     python examples/eval_optimizer_example.py
 """
 
-import lattice
-
 from lattice.context import trace_iterations, trace_session
 from lattice.decorators import action
 
@@ -36,7 +34,6 @@ def evaluate(text: str) -> dict:
 
 
 def main():
-    lattice.configure(db_path="./.lattice/traces.db")
     topic = "Python programming"
     result = None
     feedback = None

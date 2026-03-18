@@ -8,8 +8,6 @@ Usage:
     python examples/multi_agent_example.py
 """
 
-import lattice
-
 from lattice.bottleneck import find_bottlenecks
 from lattice.context import trace_session
 from lattice.decorators import action
@@ -44,7 +42,6 @@ def editor(article: str) -> str:
 
 
 def main():
-    lattice.configure(db_path="./.lattice/traces.db")
     with trace_session(goal="Produce a high-quality, publication-ready article about the given topic") as session:
         research = researcher("Python programming")
         draft = writer(research)
