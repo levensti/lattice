@@ -8,7 +8,6 @@ Usage:
 """
 
 from lattice import (
-    print_trace_summary,
     action,
     trace_iterations,
     trace_session,
@@ -56,7 +55,7 @@ def main():
             result = act(plan)
             state = observe(state, result)
 
-    print_trace_summary(session)
+    print(session)
     print(f"Completed in {iters.iteration_count} iterations")
     print(f"Final answer: {state.get('answer', 'No answer')}")
 

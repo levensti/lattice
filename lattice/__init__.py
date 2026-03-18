@@ -61,7 +61,6 @@ __all__ = [
     "get_current_session",
     "instrument",
     "judged_session",
-    "print_trace_summary",
     "score_session",
     "score_trace",
     "SQLiteStore",

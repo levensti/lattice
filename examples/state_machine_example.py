@@ -9,7 +9,6 @@ Usage:
 """
 
 from lattice import (
-    print_trace_summary,
     action,
     trace_session,
     trace_transition,
@@ -61,13 +60,13 @@ def main():
     print("--- Valid input ---")
     with trace_session(workflow_name="State Machine (valid)", goal="Process the input record through validation, enrichment, and persistence") as session:
         result = router({"step": "start", "data": {"name": "Alice", "email": "alice@example.com"}})
-    print_trace_summary(session)
+    print(session)
     print(f"Result: {result}\n")
 
     print("--- Invalid input ---")
     with trace_session(workflow_name="State Machine (invalid)", goal="Correctly reject invalid input with helpful error messages") as session:
         result = router({"step": "start", "data": {"name": "", "email": ""}})
-    print_trace_summary(session)
+    print(session)
     print(f"Result: {result}")
 
 

@@ -8,7 +8,6 @@ Usage:
 """
 
 from lattice import (
-    print_trace_summary,
     action,
     trace_iterations,
     trace_session,
@@ -53,7 +52,7 @@ def main():
                 break
             feedback = verdict["feedback"]
 
-    print_trace_summary(session)
+    print(session)
     print(f"Converged after {iters.iteration_count} iterations")
     print(f"Final output: {result}")
 
