@@ -192,8 +192,28 @@ def _render_node_card(action: ActionRecord) -> str:
             f'<span class="tag">{html.escape(t)}</span>' for t in action.tags
         ) + "</div>"
 
+    # Build evaluation section (judge-related content)
+    eval_parts = []
+    if score or judge_badge:
+        eval_parts.append(f'<div class="eval-meta-row">{score}{judge_badge}</div>')
     rubric_html = _rubric_section(judge_config)
+    if rubric_html:
+        eval_parts.append(rubric_html)
+    if action.score_explanation:
+        eval_parts.append(
+            f'<div class="eval-explanation">{html.escape(action.score_explanation[:300])}</div>'
+        )
 
+    eval_html = ""
+    if eval_parts:
+        eval_html = (
+            f'<div class="hnode-section hnode-section-eval">'
+            f'<div class="hnode-section-label">Evaluation</div>'
+            f'{"".join(eval_parts)}'
+            f'</div>'
+        )
+
+    # Build data section (inputs/outputs)
     io_html = ""
     if action.input_data or action.output_data:
         io_parts = []
@@ -207,7 +227,12 @@ def _render_node_card(action: ActionRecord) -> str:
                 f'<div class="io-block"><span class="io-label">Out</span>'
                 f'{_expandable(action.output_data, 60)}</div>'
             )
-        io_html = f'<div class="hnode-io">{"".join(io_parts)}</div>'
+        io_html = (
+            f'<div class="hnode-section hnode-section-data">'
+            f'<div class="hnode-section-label">Data</div>'
+            f'{"".join(io_parts)}'
+            f'</div>'
+        )
 
     time_html = _time_range(action.started_at, action.ended_at)
 
@@ -217,11 +242,11 @@ def _render_node_card(action: ActionRecord) -> str:
         f'<div class="hnode-head">'
         f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span>{role}</div>'
         f'</div>'
-        f'<div class="hnode-meta-row">{score}{judge_badge}<span class="hnode-latency">{latency}</span></div>'
+        f'<div class="hnode-meta-row"><span class="hnode-latency">{latency}</span></div>'
         f'{time_html}'
         f'{error_html}'
         f'{tags_html}'
-        f'{rubric_html}'
+        f'{eval_html}'
         f'{io_html}'
         f'</div>'
     )
@@ -746,7 +771,55 @@ body {
 }
 
 .hnode-tags { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
-.hnode-io { margin-top: 6px; }
+
+/* ── Card sections (Evaluation / Data) ─────────────────────── */
+
+.hnode-section {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.hnode-section-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+}
+
+.hnode-section-eval {
+    background: rgba(99, 102, 241, 0.04);
+    border-color: rgba(99, 102, 241, 0.15);
+}
+.hnode-section-eval .hnode-section-label {
+    color: #6366f1;
+}
+
+.eval-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 2px;
+}
+
+.eval-explanation {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+.hnode-section-data {
+    background: rgba(22, 163, 74, 0.03);
+    border-color: rgba(22, 163, 74, 0.15);
+}
+.hnode-section-data .hnode-section-label {
+    color: #16a34a;
+}
+
+.hnode-io { margin-top: 0; }
 
 /* ── Judge ──────────────────────────────────────────────────── */
 
@@ -764,9 +837,9 @@ body {
 }
 
 .rubric-section {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(99, 102, 241, 0.1);
 }
 .eval-rubric summary {
     font-size: 10px;

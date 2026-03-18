@@ -109,6 +109,11 @@ def tool_router(scratchpad: str) -> str:
     )
 
 
+@action(
+    goal="Search the web for relevant information",
+    role="tool",
+    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+)
 def _tool_web_search(query: str) -> str:
     return chat(
         system_prompt="You are a search abstraction.",
@@ -120,6 +125,11 @@ def _tool_web_search(query: str) -> str:
     )
 
 
+@action(
+    goal="Search the codebase for relevant APIs and modules",
+    role="tool",
+    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+)
 def _tool_code_search(query: str) -> str:
     return chat(
         system_prompt="You are a code search abstraction.",
@@ -131,6 +141,11 @@ def _tool_code_search(query: str) -> str:
     )
 
 
+@action(
+    goal="Summarize documentation into key takeaways",
+    role="tool",
+    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+)
 def _tool_doc_summarizer(text: str) -> str:
     return chat(
         system_prompt="You are a documentation summarizer.",
