@@ -77,7 +77,6 @@ judge_provider = OpenAIProvider(
 # ── Subagents / tools ────────────────────────────────────────────────────────
 @action(
     goal="Produce a set of concrete sub-goals from the user's query",
-    role="planner",
     judge=JudgeConfig(system_prompt=PLANNER_RUBRIC, provider=judge_provider),
 )
 def planner(user_query: str) -> str:
@@ -93,7 +92,6 @@ def planner(user_query: str) -> str:
 
 @action(
     goal="Choose which tools to call next given the current scratchpad",
-    role="router",
     judge=JudgeConfig(system_prompt=ROUTER_RUBRIC, provider=judge_provider),
 )
 def tool_router(scratchpad: str) -> str:
@@ -111,7 +109,6 @@ def tool_router(scratchpad: str) -> str:
 
 @action(
     goal="Search the web for relevant information",
-    role="tool",
     judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
 )
 def _tool_web_search(query: str) -> str:
@@ -127,7 +124,6 @@ def _tool_web_search(query: str) -> str:
 
 @action(
     goal="Search the codebase for relevant APIs and modules",
-    role="tool",
     judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
 )
 def _tool_code_search(query: str) -> str:
@@ -143,7 +139,6 @@ def _tool_code_search(query: str) -> str:
 
 @action(
     goal="Summarize documentation into key takeaways",
-    role="tool",
     judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
 )
 def _tool_doc_summarizer(text: str) -> str:
@@ -159,8 +154,6 @@ def _tool_doc_summarizer(text: str) -> str:
 
 @action(
     goal="Gather multi-source evidence relevant to the query",
-    role="retriever",
-    tags=["parallel", "multi-source"],
     judge=JudgeConfig(system_prompt=RETRIEVER_RUBRIC, provider=judge_provider),
 )
 def multi_source_retriever(user_query: str) -> Dict[str, str]:
@@ -177,7 +170,6 @@ def multi_source_retriever(user_query: str) -> Dict[str, str]:
 
 @action(
     goal="Synthesize a final answer from notes and reasoning",
-    role="writer",
     judge=JudgeConfig(system_prompt=WRITER_RUBRIC, provider=judge_provider),
 )
 def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
@@ -202,7 +194,6 @@ MAX_ITERATIONS = 3
 
 @action(
     goal="Run a ReAct-style loop to answer the user's question",
-    role="orchestrator",
     judge=JudgeConfig(system_prompt=ORCHESTRATOR_RUBRIC, provider=judge_provider),
 )
 def react_orchestrator(user_query: str) -> Dict[str, Any]:

@@ -31,8 +31,6 @@ def _format_action_line(s: ActionRecord) -> str:
     status = "ERROR" if s.error else "OK"
     score_str = f"{s.score:.1f}" if s.score is not None else "-"
     parts = [f"{s.name}  {status}  {s.latency_ms:.0f}ms  score={score_str}"]
-    if s.role:
-        parts.append(f"role={s.role}")
     if s.iteration is not None:
         parts.append(f"iter={s.iteration}")
     if s.activation_reason:

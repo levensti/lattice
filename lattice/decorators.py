@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from contextvars import Token
-from typing import Any, Callable, Sequence, TypedDict
+from typing import Any, Callable, TypedDict
 
 from .context import (
     ActionRecord,
@@ -76,15 +76,12 @@ def _record_action(
     *,
     span_id: str,
     name: str,
-    description: str,
     goal: str,
     input_data: str,
     output_data: str,
     action_index: int,
     latency_ms: float,
     parent_span_id: str | None,
-    tags: Sequence[str],
-    role: str | None = None,
     group_id: str | None = None,
     iteration: int | None = None,
     activation_reason: str | None = None,
@@ -96,7 +93,6 @@ def _record_action(
     session.add_action(ActionRecord(
         span_id=span_id,
         name=name,
-        description=description,
         goal=goal,
         input_data=input_data,
         output_data=output_data,
@@ -104,8 +100,6 @@ def _record_action(
         latency_ms=latency_ms,
         parent_span_id=parent_span_id,
         error=error,
-        tags=list(tags),
-        role=role,
         group_id=group_id,
         iteration=iteration,
         activation_reason=activation_reason,
@@ -136,10 +130,7 @@ def _begin_action(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     *,
-    action_id: str | None,
     name: str,
-    tags: Sequence[str],
-    role: str | None,
 ) -> _ActionContext:
     """Common setup for both sync and async action wrappers.
 
@@ -147,7 +138,7 @@ def _begin_action(
     """
     session = _current_session.get()
     input_str = _capture_inputs(func, args, kwargs)
-    span_id = action_id or uuid.uuid4().hex
+    span_id = uuid.uuid4().hex
     parent_id = _current_span_id.get()
     action_index = session.next_index() if session else 0
     topo = _read_topology_context()
@@ -170,10 +161,7 @@ def _complete_action(
     ctx: _ActionContext,
     *,
     name: str,
-    description: str,
     goal: str,
-    tags: Sequence[str],
-    role: str | None,
     result: Any,
     judge: JudgeConfig | None = None,
 ) -> None:
@@ -185,10 +173,10 @@ def _complete_action(
         _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
-            description=description, goal=goal,
+            goal=goal,
             input_data=ctx["input_str"], output_data=output_str,
             action_index=ctx["action_index"], latency_ms=latency,
-            parent_span_id=ctx["parent_id"], tags=tags, role=role,
+            parent_span_id=ctx["parent_id"],
             judge=judge, started_at=ctx["started_at"], ended_at=ended_at,
             **ctx["topo"],
         )
@@ -200,10 +188,7 @@ def _fail_action(
     ctx: _ActionContext,
     *,
     name: str,
-    description: str,
     goal: str,
-    tags: Sequence[str],
-    role: str | None,
     exc: BaseException,
     judge: JudgeConfig | None = None,
 ) -> None:
@@ -215,10 +200,10 @@ def _fail_action(
         _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
-            description=description, goal=goal,
+            goal=goal,
             input_data=ctx["input_str"], output_data="",
             action_index=ctx["action_index"], latency_ms=latency,
-            parent_span_id=ctx["parent_id"], tags=tags, role=role,
+            parent_span_id=ctx["parent_id"],
             error=str(exc), judge=judge,
             started_at=ctx["started_at"], ended_at=ended_at,
             **ctx["topo"],
@@ -227,36 +212,32 @@ def _fail_action(
 
 def _trace_decorator(
     name: str,
-    description: str,
     goal: str,
-    action_id: str | None,
-    tags: Sequence[str],
-    role: str | None,
     judge: JudgeConfig | None = None,
 ):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
+            ctx = _begin_action(func, args, kwargs, name=name)
             try:
                 result = func(*args, **kwargs)
-                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, judge=judge)
+                _complete_action(ctx, name=name, goal=goal, result=result, judge=judge)
                 return result
             except Exception as exc:
-                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc, judge=judge)
+                _fail_action(ctx, name=name, goal=goal, exc=exc, judge=judge)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            ctx = _begin_action(func, args, kwargs, action_id=action_id, name=name, tags=tags, role=role)
+            ctx = _begin_action(func, args, kwargs, name=name)
             try:
                 result = await func(*args, **kwargs)
-                _complete_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, result=result, judge=judge)
+                _complete_action(ctx, name=name, goal=goal, result=result, judge=judge)
                 return result
             except Exception as exc:
-                _fail_action(ctx, name=name, description=description, goal=goal, tags=tags, role=role, exc=exc, judge=judge)
+                _fail_action(ctx, name=name, goal=goal, exc=exc, judge=judge)
                 raise
             finally:
                 _current_span_id.reset(ctx["parent_token"])
@@ -272,11 +253,7 @@ def action(
     _func=None,
     *,
     name: str | None = None,
-    description: str = "",
     goal: str = "",
-    action_id: str | None = None,
-    tags: Sequence[str] = (),
-    role: str | None = None,
     judge: JudgeConfig | None = None,
 ) -> Callable:
     """Decorator to trace an action in a workflow.
@@ -286,33 +263,22 @@ def action(
         @action(goal="Must cite sources")
         def research(topic): ...
 
-        @action(goal="Decide which tool to call", role="think")
-        def think(state): ...
-
     Override the global judge for this action, add criteria, or inject a
     reference answer::
 
         @action(
             goal="Research and cite sources accurately",
             judge=JudgeConfig(
-                model="claude-opus-4-6",
-                criteria={
-                    "factual_accuracy": "Are claims supported by evidence?",
-                    "citation_quality": "Are sources cited properly?",
-                },
+                system_prompt="...",
+                provider=my_provider,
             ),
         )
         def research(topic): ...
 
     Args:
         name: Action name (defaults to the function's ``__name__``).
-        description: What this action does.
         goal: **Required.** What success looks like — the judge evaluates
             against this.
-        action_id: Custom span ID (auto-generated if omitted).
-        tags: Labels for grouping/filtering (e.g. ``["llm", "io"]``).
-        role: Semantic role (e.g. ``"generator"``, ``"evaluator"``,
-              ``"think"``). Used by topology-aware analysis.
         judge: Per-action :class:`~lattice.context.JudgeConfig`. When set,
             overrides the global judge for this action. Supports ``criteria``
             for multi-axis rubric evaluation and ``reference`` for calibrated
@@ -341,7 +307,7 @@ def action(
                 f"@action requires a goal when judge is configured — "
                 f"use @action(goal=\"...\", judge=...) on '{actual_name}'."
             )
-        return _trace_decorator(actual_name, description, goal, action_id, tags, role, judge)(func)
+        return _trace_decorator(actual_name, goal, judge)(func)
 
     if _func is not None:
         return decorator(_func)
@@ -366,9 +332,6 @@ def trace_action(
     name: str,
     *,
     goal: str = "",
-    description: str = "",
-    role: str | None = None,
-    tags: Sequence[str] = (),
     input_data: Any = None,
     judge: JudgeConfig | None = None,
 ):
@@ -385,10 +348,8 @@ def trace_action(
     Args:
         name: Action name.
         goal: **Required.** Quality goal for the judge.
-        description: What this block does.
-        role: Semantic role in the architecture.
-        tags: Labels for grouping/filtering.
         input_data: Optional input to record on the action.
+        judge: Per-action judge config override.
     """
     if not goal and judge is not None:
         raise TypeError(
@@ -419,10 +380,10 @@ def trace_action(
             _record_action(
                 session,
                 span_id=span_id, name=name,
-                description=description, goal=goal,
+                goal=goal,
                 input_data=input_str, output_data=output_str,
                 action_index=action_index, latency_ms=latency,
-                parent_span_id=parent_id, tags=tags, role=role,
+                parent_span_id=parent_id,
                 judge=judge, started_at=started_at, ended_at=ended_at,
                 **topo,
             )
@@ -435,10 +396,10 @@ def trace_action(
             _record_action(
                 session,
                 span_id=span_id, name=name,
-                description=description, goal=goal,
+                goal=goal,
                 input_data=input_str, output_data="",
                 action_index=action_index, latency_ms=latency,
-                parent_span_id=parent_id, tags=tags, role=role,
+                parent_span_id=parent_id,
                 error=str(exc), judge=judge,
                 started_at=started_at, ended_at=ended_at,
                 **topo,
@@ -453,9 +414,6 @@ def instrument(
     *,
     name: str | None = None,
     goal: str = "",
-    description: str = "",
-    tags: Sequence[str] = (),
-    role: str | None = None,
     judge: JudgeConfig | None = None,
 ) -> Callable:
     """Instrument an existing function for tracing without modifying its source.
@@ -476,9 +434,7 @@ def instrument(
         func: The function to instrument.
         name: Action name (defaults to ``func.__name__``).
         goal: **Required.** Quality goal for the judge.
-        description: What this function does.
-        tags: Labels for grouping/filtering.
-        role: Semantic role in the architecture.
+        judge: Per-action judge config override.
 
     Raises:
         TypeError: If *goal* is not provided.
@@ -489,4 +445,4 @@ def instrument(
             f"instrument() requires a goal when judge is configured — use "
             f"instrument({actual_name}, goal=\"...\", judge=...)."
         )
-    return _trace_decorator(actual_name, description, goal, None, tags, role, judge)(func)
+    return _trace_decorator(actual_name, goal, judge)(func)

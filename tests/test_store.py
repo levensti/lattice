@@ -66,7 +66,7 @@ def test_query_empty_db():
 def test_session_with_actions_roundtrips():
     session = TraceSession(trace_id="rt1", workflow_name="roundtrip", goal="test")
     session.add_action(ActionRecord(
-        span_id="s1", name="step1", description="desc", goal="goal",
+        span_id="s1", name="step1", goal="goal",
         input_data="in", output_data="out", action_index=0, latency_ms=42.5,
         score=4.0, score_explanation="good",
     ))
@@ -138,7 +138,7 @@ def test_upsert_on_duplicate_trace_id():
 def test_judge_result_roundtrip():
     session = TraceSession(trace_id="jr1", workflow_name="judge", goal="test judges")
     session.add_action(ActionRecord(
-        span_id="s1", name="step1", description="desc", goal="goal",
+        span_id="s1", name="step1", goal="goal",
         input_data="in", output_data="out", action_index=0, latency_ms=10.0,
         score=4.0, score_explanation="good",
         judge_result=JudgeResult(score=4.5, explanation="accurate", name="accuracy", model="gpt-4"),
@@ -156,7 +156,7 @@ def test_judge_result_roundtrip():
 def test_judge_config_roundtrip():
     session = TraceSession(trace_id="jc1", workflow_name="judge_cfg", goal="test config")
     session.add_action(ActionRecord(
-        span_id="s1", name="step1", description="desc", goal="goal",
+        span_id="s1", name="step1", goal="goal",
         input_data="in", output_data="out", action_index=0, latency_ms=10.0,
         judge_config={
             "system_prompt": "Rate 1-5",
@@ -234,27 +234,14 @@ def test_transitions_roundtrip():
     assert loaded.transitions[1].auto is True
 
 
-def test_tags_roundtrip():
-    session = TraceSession(trace_id="tag1", workflow_name="w", goal="g")
-    session.add_action(ActionRecord(
-        span_id="s1", name="step1", description="d", goal="g",
-        input_data="in", output_data="out", action_index=0, latency_ms=10.0,
-        tags=["important", "slow"],
-    ))
-    save_session(session)
-
-    loaded = store_traces(trace_id="tag1")[0]
-    assert set(loaded.actions[0].tags) == {"important", "slow"}
-
-
 def test_parent_span_roundtrip():
     session = TraceSession(trace_id="tree1", workflow_name="w", goal="g")
     session.add_action(ActionRecord(
-        span_id="root", name="parent_action", description="d", goal="g",
+        span_id="root", name="parent_action", goal="g",
         input_data="", output_data="", action_index=0, latency_ms=10.0,
     ))
     session.add_action(ActionRecord(
-        span_id="child1", name="child_action", description="d", goal="g",
+        span_id="child1", name="child_action", goal="g",
         input_data="", output_data="", action_index=1, latency_ms=5.0,
         parent_span_id="root",
     ))
@@ -272,11 +259,9 @@ def test_full_roundtrip():
         session_score=4.2, session_score_explanation="solid run",
     )
     session.add_action(ActionRecord(
-        span_id="s1", name="research", description="web search", goal="find info",
+        span_id="s1", name="research", goal="find info",
         input_data="query", output_data="results", action_index=0, latency_ms=150.0,
         score=4.0, score_explanation="thorough",
-        tags=["web", "search"],
-        role="researcher",
         group_id="g1",
         iteration=0,
         activation_reason="user request",
@@ -284,7 +269,7 @@ def test_full_roundtrip():
         judge_result=JudgeResult(score=4.0, explanation="good coverage", name="coverage", model="gpt-4o"),
     ))
     session.add_action(ActionRecord(
-        span_id="s2", name="summarize", description="condense", goal="short summary",
+        span_id="s2", name="summarize", goal="short summary",
         input_data="results", output_data="summary", action_index=1, latency_ms=50.0,
         parent_span_id="s1",
     ))
@@ -297,11 +282,9 @@ def test_full_roundtrip():
     assert loaded.session_score_explanation == "solid run"
     assert len(loaded.actions) == 2
     a0 = loaded.actions[0]
-    assert a0.role == "researcher"
     assert a0.group_id == "g1"
     assert a0.iteration == 0
     assert a0.activation_reason == "user request"
-    assert set(a0.tags) == {"web", "search"}
     assert a0.judge_result is not None
     assert a0.judge_result.score == 4.0
     assert a0.judge_config["model"] == "gpt-4o"

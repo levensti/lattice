@@ -43,17 +43,6 @@ def test_async_step_recorded():
     assert session.actions[0].name == "async_greeter"
 
 
-def test_step_with_tags():
-    @action(name="search", goal="Return results", tags=["io", "external"])
-    def search(query: str) -> list:
-        return [{"title": "result"}]
-
-    with trace_session(goal="test") as session:
-        search("python")
-
-    assert session.actions[0].tags == ["io", "external"]
-
-
 def test_step_nested_spans():
     @action(name="inner", goal="inner criteria")
     def inner_fn(x: int) -> int:

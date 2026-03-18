@@ -59,7 +59,6 @@ def _build_prompt_for_action(
     builder = action_prompt_builder or build_judge_prompt
     return builder(
         name=action.name,
-        description=action.description,
         goal=action.goal,
         input_data=action.input_data,
         output_data=action.output_data,
@@ -113,7 +112,7 @@ def score_trace(
         system_prompt: Override the default system prompt (used as fallback
             for actions that don't set ``JudgeConfig.system_prompt``).
         action_prompt_builder: Callable that builds the user prompt for each
-            action. Must accept keyword arguments ``name``, ``description``,
+            action. Must accept keyword arguments ``name``,
             ``goal``, ``input_data``, ``output_data`` and return a string.
     """
     for a in session.actions:

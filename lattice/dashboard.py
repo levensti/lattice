@@ -126,12 +126,6 @@ def _rubric_section(judge_config: dict[str, object] | None) -> str:
 # ── horizontal tree ──────────────────────────────────────────────────
 
 
-def _role_badge(role: str | None) -> str:
-    if not role:
-        return ""
-    return f'<span class="role-badge">{html.escape(role)}</span>'
-
-
 def _status_dot(error: str | None) -> str:
     if error:
         return '<span class="dot dot-err" title="Error"></span>'
@@ -175,7 +169,6 @@ def _time_range(started_at: str | None, ended_at: str | None) -> str:
 def _render_node_card(action: ActionRecord) -> str:
     """Render a compact card for a single action node."""
     name_esc = html.escape(_clean_name(action.name))
-    role = _role_badge(action.role)
     dot = _status_dot(action.error)
     latency = _latency_fmt(action.latency_ms)
     score = _score_pill(action.score)
@@ -185,12 +178,6 @@ def _render_node_card(action: ActionRecord) -> str:
     error_html = ""
     if action.error:
         error_html = f'<div class="hnode-error">{html.escape(action.error[:200])}</div>'
-
-    tags_html = ""
-    if action.tags:
-        tags_html = '<div class="hnode-tags">' + " ".join(
-            f'<span class="tag">{html.escape(t)}</span>' for t in action.tags
-        ) + "</div>"
 
     # Build evaluation section (judge-related content)
     eval_parts = []
@@ -240,12 +227,11 @@ def _render_node_card(action: ActionRecord) -> str:
     return (
         f'<div class="hnode{err_cls}">'
         f'<div class="hnode-head">'
-        f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span>{role}</div>'
+        f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span></div>'
         f'</div>'
         f'<div class="hnode-meta-row"><span class="hnode-latency">{latency}</span></div>'
         f'{time_html}'
         f'{error_html}'
-        f'{tags_html}'
         f'{eval_html}'
         f'{io_html}'
         f'</div>'
@@ -770,8 +756,6 @@ body {
     word-break: break-word;
 }
 
-.hnode-tags { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
-
 /* ── Card sections (Evaluation / Data) ─────────────────────── */
 
 .hnode-section {
@@ -848,31 +832,7 @@ body {
     letter-spacing: 0.03em;
 }
 
-/* ── Tags & pills ──────────────────────────────────────────── */
-
-.tag {
-    display: inline-block;
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
-    background: var(--surface-3);
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-    font-weight: 500;
-}
-
-.role-badge {
-    display: inline-block;
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
-    background: rgba(0,0,0,0.04);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-light);
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-}
+/* ── Pills ─────────────────────────────────────────────────── */
 
 .score-pill {
     display: inline-block;

@@ -17,7 +17,7 @@ _RUBRIC = "Score 1-5. Respond: {\"reasoning\": \"...\", \"score\": <1-5>, \"expl
 
 def _make_action(**overrides):
     defaults = dict(
-        span_id="s1", name="researcher", description="Searches for info",
+        span_id="s1", name="researcher",
         goal="Must cite sources", input_data="What is Python?",
         output_data="Python is a programming language.",
         action_index=0, latency_ms=10.0,
@@ -39,13 +39,11 @@ def _fake_provider(response: str = '{"score": 4, "explanation": "Good"}'):
 def test_build_judge_prompt_contains_fields():
     prompt = build_judge_prompt(
         name="researcher",
-        description="Searches for information",
         goal="Must cite sources",
         input_data="What is Python?",
         output_data="Python is a programming language.",
     )
     assert "researcher" in prompt
-    assert "Searches for information" in prompt
     assert "Must cite sources" in prompt
     assert "What is Python?" in prompt
     assert "Python is a programming language." in prompt
@@ -53,7 +51,7 @@ def test_build_judge_prompt_contains_fields():
 
 def test_build_judge_prompt_default_goal():
     prompt = build_judge_prompt(
-        name="x", description="", goal="", input_data="in", output_data="out",
+        name="x", goal="", input_data="in", output_data="out",
     )
     assert "quality" in prompt.lower()
 
@@ -125,7 +123,7 @@ def test_score_trace_custom_action_prompt_builder():
     session = TraceSession(goal="test")
     session.add_action(_make_action())
 
-    def custom_builder(*, name, description, goal, input_data, output_data):
+    def custom_builder(*, name, goal, input_data, output_data):
         return f"CUSTOM: {name} | {goal}"
 
     prov = _fake_provider()
@@ -503,7 +501,7 @@ def test_per_action_judge_custom_prompt_builder():
     """JudgeConfig.action_prompt_builder overrides global action_prompt_builder."""
     prov = _fake_provider()
 
-    def custom_builder(*, name, description, goal, input_data, output_data):
+    def custom_builder(*, name, goal, input_data, output_data):
         return f"PER-ACTION: {name}"
 
     jc = JudgeConfig(system_prompt=_RUBRIC, provider=prov, action_prompt_builder=custom_builder)
