@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_actions_parent ON actions (trace_id, parent_span_
 CREATE INDEX IF NOT EXISTS idx_actions_score ON actions (score);
 CREATE INDEX IF NOT EXISTS idx_actions_judge_model ON actions (judge_model);
 CREATE INDEX IF NOT EXISTS idx_actions_group ON actions (trace_id, group_id);
+CREATE INDEX IF NOT EXISTS idx_actions_actor_id ON actions (actor_id);
 
 CREATE TABLE IF NOT EXISTS judge_results (
     trace_id     TEXT NOT NULL,
@@ -137,29 +138,9 @@ class SQLiteStore(Store):
 
         conn.executescript(_SCHEMA)
         conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            self._ensure_schema(conn)
-        except sqlite3.OperationalError:
-            # If the DB is read-only (or otherwise not writable), we should still
-            # be able to browse existing traces.
-            pass
         self._local.conn = conn
         self._local.path = self._db_path
         return conn
-
-    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        """Apply lightweight migrations for older DBs."""
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)").fetchall()}
-        try:
-            if "actor_name" not in cols:
-                conn.execute("ALTER TABLE actions ADD COLUMN actor_name TEXT")
-            if "actor_id" not in cols:
-                conn.execute("ALTER TABLE actions ADD COLUMN actor_id TEXT")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_actor_id ON actions (actor_id)")
-            conn.commit()
-        except sqlite3.OperationalError:
-            # Don't break read paths if migrations can't be applied.
-            return
 
     # ── Store interface ───────────────────────────────────────────────
 
@@ -288,11 +269,8 @@ class SQLiteStore(Store):
         ph = ",".join("?" * len(trace_ids))
 
         # Batch-fetch child data
-        action_cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)").fetchall()}
-        has_actor = "actor_name" in action_cols and "actor_id" in action_cols
-        actor_select = "actor_name, actor_id" if has_actor else "NULL AS actor_name, NULL AS actor_id"
         action_rows = conn.execute(
-            f"SELECT trace_id, span_id, name, {actor_select}, goal, "
+            f"SELECT trace_id, span_id, name, actor_name, actor_id, goal, "
             f"input_data, output_data, action_index, latency_ms, "
             f"parent_span_id, score, score_explanation, error, "
             f"group_id, iteration, activation_reason, started_at, ended_at, "

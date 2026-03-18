@@ -599,9 +599,6 @@ def trace_session(
                 for a in session.actions:
                     if a.error is None and a.judge is not None:
                         _score_single_action(a, a.judge.provider, a.judge.system_prompt)
-            except ImportError:
-                # Judge deps (e.g., httpx) are optional; tracing should still work.
-                pass
             except Exception:
                 logger.warning(
                     "Per-action scoring failed for trace %s",

@@ -21,52 +21,48 @@ from .context import (
     trace_transition,
 )
 from .decorators import action, instrument, trace_action
+from .judge.prompt_builder import (
+    ActionPromptBuilder,
+    JUDGE_SYSTEM_PROMPT,
+    SessionPromptBuilder,
+)
+from .judge.providers import AnthropicProvider, ApiType, InferenceProvider, OpenAIProvider, OpenRouterProvider
+from .judge.scorer import async_score_session, async_score_trace, BackgroundScorer, score_session, score_trace
 from .logging_utils import print_trace_summary
 from .storage import SQLiteStore, Store
 from .storage.store import configure, traces
 
-_HAS_JUDGE_DEPS = True
-try:
-    from .judge.prompt_builder import (
-        ActionPromptBuilder,
-        JUDGE_SYSTEM_PROMPT,
-        SessionPromptBuilder,
-    )
-    from .judge.providers import (
-        AnthropicProvider,
-        ApiType,
-        InferenceProvider,
-        OpenAIProvider,
-        OpenRouterProvider,
-    )
-    from .judge.scorer import (
-        async_score_session,
-        async_score_trace,
-        BackgroundScorer,
-        score_session,
-        score_trace,
-    )
-except ImportError:  # optional dependency (e.g., httpx)
-    _HAS_JUDGE_DEPS = False
-
 __all__ = [
     "action",
+    "ActionPromptBuilder",
     "ActionRecord",
     "BottleneckResult",
     "GroupRecord",
     "GroupType",
     "ImpactType",
+    "JUDGE_SYSTEM_PROMPT",
     "JudgeConfig",
+    "AnthropicProvider",
+    "ApiType",
+    "InferenceProvider",
+    "OpenAIProvider",
+    "OpenRouterProvider",
     "JudgeResult",
     "LoopContext",
+    "SessionPromptBuilder",
     "TraceSession",
     "TransitionRecord",
+    "async_score_session",
+    "async_score_trace",
+    "BackgroundScorer",
     "configure",
     "copy_trace_context",
     "find_bottlenecks",
     "get_current_session",
     "instrument",
     "judged_session",
+    "score_session",
+    "score_trace",
     "SQLiteStore",
     "Store",
     "trace_action",
@@ -78,20 +74,3 @@ __all__ = [
     "trace_transition",
     "traces",
 ]
-
-if _HAS_JUDGE_DEPS:
-    __all__.extend([
-        "ActionPromptBuilder",
-        "JUDGE_SYSTEM_PROMPT",
-        "SessionPromptBuilder",
-        "AnthropicProvider",
-        "ApiType",
-        "InferenceProvider",
-        "OpenAIProvider",
-        "OpenRouterProvider",
-        "async_score_session",
-        "async_score_trace",
-        "BackgroundScorer",
-        "score_session",
-        "score_trace",
-    ])
