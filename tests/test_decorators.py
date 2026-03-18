@@ -1,6 +1,4 @@
 import asyncio
-import threading
-import time
 
 import pytest
 
@@ -246,24 +244,28 @@ def test_trace_step_with_input():
     assert "result1" in s.output_data
 
 
-def test_trace_action_scores_inline():
-    """trace_action with judge= should score in background, just like @action."""
+def test_trace_session_scores_on_exit():
+    """trace_session(judge=...) should score the session on exit.
+
+    Per-action scoring is driven by each action's JudgeConfig, not the
+    session-level judge.
+    """
     from unittest.mock import MagicMock
 
     prov = MagicMock()
     prov.judge.return_value = '{"score": 3.5, "explanation": "decent"}'
 
-    with trace_session(goal="test", persist=False) as session:
+    with trace_session(goal="test", persist=False, judge=prov) as session:
         with trace_action(
             "external_call",
             goal="get results",
-            judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
         ) as ts:
             ts.set_output("some results")
 
-    # Let background thread finish
-    time.sleep(0.2)
-    assert session.actions[0].score == 3.5
+    # No per-action JudgeConfig, so action is unscored; judge is only used
+    # for the session-level evaluation.
+    assert session.actions[0].score is None
+    assert session.session_score == 3.5
 
 
 def test_trace_step_nested_under_decorator():
@@ -419,64 +421,43 @@ def test_manual_transition_preferred_over_auto():
 # ── non-blocking inline scoring ─────────────────────────────────────
 
 
-def test_inline_scoring_does_not_block_caller():
-    """@action with judge= should return immediately; scoring runs in background."""
+def test_per_action_judge_config_overrides_session_judge():
+    """Per-action JudgeConfig should override the session-level judge provider."""
     from unittest.mock import MagicMock
 
-    scoring_started = threading.Event()
-    scoring_gate = threading.Event()
+    session_prov = MagicMock()
+    session_prov.judge.return_value = '{"score": 2, "explanation": "session judge"}'
 
-    def slow_judge(system, prompt):
-        scoring_started.set()
-        scoring_gate.wait(timeout=5)
-        return '{"score": 4, "explanation": "Good"}'
-
-    prov = MagicMock()
-    prov.judge = slow_judge
+    action_prov = MagicMock()
+    action_prov.judge.return_value = '{"score": 5, "explanation": "action judge"}'
 
     @action(
         goal="greet",
-        judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
+        judge=JudgeConfig(system_prompt="Custom rubric.", provider=action_prov),
     )
     def greet(name: str) -> str:
         return f"Hello, {name}!"
 
-    with trace_session(goal="test", persist=False) as session:
-        t0 = time.perf_counter()
-        result = greet("Alice")
-        elapsed_ms = (time.perf_counter() - t0) * 1000
+    with trace_session(goal="test", persist=False, judge=session_prov) as session:
+        greet("Alice")
 
-    # The call returned without waiting for the judge
-    assert result == "Hello, Alice!"
-    assert elapsed_ms < 500  # would be >5s if blocking
-
-    # Score is None immediately (judge hasn't finished)
-    assert session.actions[0].score is None
-
-    # Let the judge finish and verify score is written back
-    scoring_started.wait(timeout=5)
-    scoring_gate.set()
-    time.sleep(0.1)  # brief wait for thread to write back
-    assert session.actions[0].score == 4.0
+    assert session.actions[0].score == 5.0
+    action_prov.judge.assert_called_once()
 
 
-def test_inline_scoring_failure_does_not_crash():
-    """If the judge raises, the action still completes and score stays None."""
+def test_scoring_failure_does_not_crash():
+    """If the judge raises, the session still completes and scores stay None."""
     from unittest.mock import MagicMock
 
     prov = MagicMock()
     prov.judge.side_effect = RuntimeError("judge down")
 
-    @action(
-        goal="greet",
-        judge=JudgeConfig(system_prompt="Rate it.", provider=prov),
-    )
+    @action(goal="greet")
     def greet(name: str) -> str:
         return f"Hello, {name}!"
 
-    with trace_session(goal="test", persist=False) as session:
+    with trace_session(goal="test", persist=False, judge=prov) as session:
         result = greet("Bob")
 
     assert result == "Hello, Bob!"
-    time.sleep(0.2)  # let the thread finish
     assert session.actions[0].score is None

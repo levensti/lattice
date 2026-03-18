@@ -16,19 +16,27 @@ from __future__ import annotations
 
 import os
 import json
-from datetime import datetime, timezone
 from typing import Dict, Any
 
 from openai import OpenAI
 
 from lattice import (
     action,
-    JudgeConfig,
-    trace_session,
+    judged_session,
     trace_iterations,
     trace_parallel,
     traces,
     OpenAIProvider,
+    JudgeConfig,
+)
+from scripts.providers.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    ORCHESTRATOR_RUBRIC,
+    PLANNER_RUBRIC,
+    RETRIEVER_RUBRIC,
+    ROUTER_RUBRIC,
+    SESSION_RUBRIC,
+    WRITER_RUBRIC,
 )
 from lattice.bottleneck import find_bottlenecks
 
@@ -66,31 +74,11 @@ judge_provider = OpenAIProvider(
 )
 
 
-# ── Scoring configuration ────────────────────────────────────────────────────
-
-SESSION_RUBRIC = """You are a strict technical judge scoring an answer from 1–5.
-
-Score 1: Completely incorrect, off-topic, or missing.
-Score 2: Major inaccuracies or omissions; barely useful.
-Score 3: Mostly correct but with notable gaps or lack of depth.
-Score 4: Correct and helpful with minor gaps.
-Score 5: Exceptionally clear, thorough, and accurate.
-
-Respond with JSON: {"score": <1-5>, "explanation": "..."}.
-"""
-
-
 # ── Subagents / tools ────────────────────────────────────────────────────────
-
-AGENT_SYSTEM_PROMPT = """You are a helpful research assistant.
-Follow the instructions carefully and reason step by step when useful.
-"""
-
-
 @action(
     goal="Produce a set of concrete sub-goals from the user's query",
     role="planner",
-    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+    judge=JudgeConfig(system_prompt=PLANNER_RUBRIC, provider=judge_provider),
 )
 def planner(user_query: str) -> str:
     return chat(
@@ -106,7 +94,7 @@ def planner(user_query: str) -> str:
 @action(
     goal="Choose which tools to call next given the current scratchpad",
     role="router",
-    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+    judge=JudgeConfig(system_prompt=ROUTER_RUBRIC, provider=judge_provider),
 )
 def tool_router(scratchpad: str) -> str:
     return chat(
@@ -158,7 +146,7 @@ def _tool_doc_summarizer(text: str) -> str:
     goal="Gather multi-source evidence relevant to the query",
     role="retriever",
     tags=["parallel", "multi-source"],
-    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+    judge=JudgeConfig(system_prompt=RETRIEVER_RUBRIC, provider=judge_provider),
 )
 def multi_source_retriever(user_query: str) -> Dict[str, str]:
     """Fan out to multiple tools in a traced parallel block and return combined notes."""
@@ -175,7 +163,7 @@ def multi_source_retriever(user_query: str) -> Dict[str, str]:
 @action(
     goal="Synthesize a final answer from notes and reasoning",
     role="writer",
-    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+    judge=JudgeConfig(system_prompt=WRITER_RUBRIC, provider=judge_provider),
 )
 def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
     return chat(
@@ -194,38 +182,27 @@ def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
 
 # ── ReAct-style orchestrator ─────────────────────────────────────────────────
 
-
-def _log_action(name: str, *, done: bool = False) -> None:
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    tag = "DONE" if done else "START"
-    print(f"  [{ts} UTC] {tag:>5}  {name}")
-
-
 MAX_ITERATIONS = 3
 
 
 @action(
     goal="Run a ReAct-style loop to answer the user's question",
     role="orchestrator",
-    judge=JudgeConfig(system_prompt=SESSION_RUBRIC, provider=judge_provider),
+    judge=JudgeConfig(system_prompt=ORCHESTRATOR_RUBRIC, provider=judge_provider),
 )
 def react_orchestrator(user_query: str) -> Dict[str, Any]:
     """Coordinate planner, router, retriever, and synthesizer in a small ReAct loop."""
     scratchpad = ""
     history: list[Dict[str, Any]] = []
 
-    _log_action("planner")
     plan = planner(user_query)
-    _log_action("planner", done=True)
     scratchpad += f"PLAN:\n{plan}\n\n"
     history.append({"step": "plan", "content": plan})
 
     notes: Dict[str, str] = {}
 
     for i in trace_iterations("react_loop", range(MAX_ITERATIONS)):
-        _log_action(f"tool_router (iter {i})")
         route_raw = tool_router(scratchpad)
-        _log_action(f"tool_router (iter {i})", done=True)
         history.append({"step": f"route_{i}", "content": route_raw})
 
         try:
@@ -240,18 +217,14 @@ def react_orchestrator(user_query: str) -> Dict[str, Any]:
         scratchpad += f"[loop {i}] TOOLS: {tools}\n"
 
         if any(t in {"web_search", "code_search", "doc_summarizer"} for t in tools):
-            _log_action(f"multi_source_retriever (iter {i})")
             notes = multi_source_retriever(user_query)
-            _log_action(f"multi_source_retriever (iter {i})", done=True)
             history.append({"step": f"retrieval_{i}", "content": notes})
             scratchpad += f"[loop {i}] RETRIEVAL_NOTES:\n{json.dumps(notes, indent=2)}\n\n"
         else:
             scratchpad += f"[loop {i}] Router did not request known tools; stopping.\n"
             break
 
-    _log_action("synthesizer")
     final_answer = synthesizer(user_query, notes=notes, scratchpad=scratchpad)
-    _log_action("synthesizer", done=True)
     history.append({"step": "final_answer", "content": final_answer})
 
     return {
@@ -262,55 +235,23 @@ def react_orchestrator(user_query: str) -> Dict[str, Any]:
     }
 
 
-def run_react_session(query: str):
-    with trace_session(
+def main() -> None:
+    user_query = "How could I use retrieval-augmented generation to debug complex multi-agent systems?"
+
+    with judged_session(
         goal="Answer the user's research question accurately and comprehensively",
         workflow_name="ReAct multi-agent demo (OpenAI)",
         judge=judge_provider,
         judge_system_prompt=SESSION_RUBRIC,
     ) as session:
-        result = react_orchestrator(query)
-    return session, result
+        result = react_orchestrator(user_query)
 
-
-def main() -> None:
-    user_query = "How could I use retrieval-augmented generation to debug complex multi-agent systems?"
-
-    print("Running ReAct-style session...\n")
-    session, result = run_react_session(user_query)
-
-    print("=== FINAL ANSWER (truncated) ===\n")
-    print(result["answer"][:2000])
-    print("\n" + "=" * 80 + "\n")
-
-    # Action scores were computed inline by @action(judge=...);
-    # session trajectory score was computed on trace_session exit.
-    print("Action scores:")
+    # Keep output minimal: just show session score and a short summary of actions.
+    print(f"Session score: {session.session_score}/5")
+    print(f"Explanation: {session.session_score_explanation}")
+    print("Actions:")
     for a in session.actions:
-        score = f"{a.score}/5" if a.score is not None else "n/a"
-        print(f"  {a.name}: {score}")
-
-    if session.session_score is not None:
-        print(f"\nSession score: {session.session_score:.1f}/5")
-        print(f"Explanation: {session.session_score_explanation}")
-
-    print("\nBottlenecks:")
-    b_list = list(find_bottlenecks(session))
-    if not b_list:
-        print("  None detected")
-    else:
-        for b in b_list:
-            print(f"  {b.action_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
-
-    print("\nRecent traces:")
-    for t in traces(last=3):
-        print(f"- {t.trace_id} | {t.workflow_name} | actions={len(t.actions)} | score={t.session_score}")
-
-    print(
-        "\nTo explore visually, run:\n"
-        "  uv run python -m lattice dashboard\n"
-        "and open http://localhost:8080 in your browser."
-    )
+        print(f"- {a.name}: {a.score}/5")
 
 
 if __name__ == "__main__":

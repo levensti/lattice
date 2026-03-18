@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextvars
 import logging
-import threading
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -451,6 +450,16 @@ def trace_session(
 ):
     """Context manager that groups ``@action``-decorated calls into a single trace.
 
+    Scoring semantics:
+
+    - ``JudgeConfig`` on individual actions controls **per-action** judging.
+      Those configs carry their own provider + rubric and are evaluated at
+      session exit.
+    - The ``judge=`` argument on :func:`trace_session` controls **session-level**
+      judging only — i.e. “given the inputs, outputs, and trajectory, how
+      good was this overall workflow?”  It is never reused for per-action
+      judging.
+
     Args:
         trace_id: Custom trace ID (auto-generated if omitted).
         workflow_name: Human-readable name for this workflow.
@@ -459,15 +468,11 @@ def trace_session(
         persist: If ``True`` (default), automatically save the completed
             session to the local SQLite store when the context exits.
         judge: Optional :class:`~lattice.judge.providers.InferenceProvider`.
-            When set, the full trajectory is scored in a background thread
-            on exit — evaluating the session's final output against its
-            *goal* — without blocking the caller. The session is persisted
-            immediately, then re-persisted with the score once scoring
-            completes. Per-action scoring is handled by each action's
-            own :class:`JudgeConfig`; this param controls the
-            session-level (end-to-end) score only.
-        judge_system_prompt: Override the default judge system prompt for
-            session-level scoring. Only used when *judge* is set.
+            When set, the final output of the workflow is judged against
+            ``goal`` on exit, producing a session score. It is **not**
+            used for per-action scoring.
+        judge_system_prompt: Override the default judge system prompt.
+            Only used when *judge* is set.
     """
     session = TraceSession(
         trace_id=trace_id or uuid.uuid4().hex,
@@ -483,7 +488,38 @@ def trace_session(
         _current_session.reset(session_token)
         _current_span_id.reset(span_token)
 
-        # Persist first (without scores) so the session is durable immediately
+        # First, score any actions that have their own JudgeConfig.  Each
+        # action carries its own provider + rubric; we never reuse the
+        # session-level judge for per-action evaluation.
+        if session.actions:
+            try:
+                from .judge.scorer import _score_single_action
+
+                for a in session.actions:
+                    if a.error is None and a.judge is not None:
+                        _score_single_action(a, a.judge.provider, a.judge.system_prompt)
+            except Exception:
+                logger.warning(
+                    "Per-action scoring failed for trace %s",
+                    session.trace_id,
+                    exc_info=True,
+                )
+
+        # Then, optionally score the overall trajectory against the session goal.
+        if judge is not None and session.goal and session.actions:
+            try:
+                from .judge.scorer import score_session as _score_session
+                from .judge.prompt_builder import JUDGE_SYSTEM_PROMPT
+
+                sys_prompt = judge_system_prompt or JUDGE_SYSTEM_PROMPT
+                _score_session(session, provider=judge, system_prompt=sys_prompt)
+            except Exception:
+                logger.warning(
+                    "Session-level scoring failed for trace %s",
+                    session.trace_id,
+                    exc_info=True,
+                )
+
         if persist:
             try:
                 from .storage.store import save_session
@@ -495,32 +531,39 @@ def trace_session(
                     exc_info=True,
                 )
 
-        # Score the end-to-end trajectory in a background thread so the
-        # caller is never blocked.  Re-persist after scoring completes.
-        if judge is not None and session.goal and session.actions:
-            def _bg_score_session() -> None:
-                try:
-                    from .judge.scorer import score_session as _score_session
-                    from .judge.prompt_builder import JUDGE_SYSTEM_PROMPT
-
-                    sys_prompt = judge_system_prompt or JUDGE_SYSTEM_PROMPT
-                    _score_session(session, provider=judge, system_prompt=sys_prompt)
-                    if persist:
-                        from .storage.store import save_session as _save
-                        _save(session)
-                except Exception:
-                    logger.warning(
-                        "Background session-level scoring failed for trace %s",
-                        session.trace_id,
-                        exc_info=True,
-                    )
-
-            threading.Thread(target=_bg_score_session, daemon=True).start()
         logger.info(
             "Trace session ended (trace_id=%s, steps=%d)",
             session.trace_id,
             len(session.actions),
         )
+
+
+def judged_session(
+    *,
+    workflow_name: str = "",
+    goal: str,
+    judge: "InferenceProvider",
+    persist: bool = True,
+    trace_id: str | None = None,
+    judge_system_prompt: str | None = None,
+):
+    """Stricter variant of :func:`trace_session` that requires a judge.
+
+    Applications that always want session-level judging should use this helper
+    instead of :func:`trace_session`.
+    """
+    if judge is None:
+        raise TypeError("judged_session requires judge=InferenceProvider(...), got None")
+    if not goal:
+        raise TypeError("judged_session requires goal='...'.")
+    return trace_session(
+        trace_id=trace_id,
+        workflow_name=workflow_name,
+        goal=goal,
+        persist=persist,
+        judge=judge,
+        judge_system_prompt=judge_system_prompt,
+    )
 
 
 def get_current_session() -> TraceSession | None:

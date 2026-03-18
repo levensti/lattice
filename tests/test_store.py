@@ -2,8 +2,6 @@
 
 import json
 import sqlite3
-import threading
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -318,68 +316,30 @@ def test_full_roundtrip():
 # ── non-blocking session scoring ──────────────────────────────────────
 
 
-def test_session_scoring_does_not_block_exit():
-    """trace_session with judge= should exit immediately; scoring runs in background."""
-    scoring_started = threading.Event()
-    scoring_gate = threading.Event()
+def test_session_scored_and_persisted_on_exit():
+    """trace_session(judge=...) should score the session and persist on exit.
 
-    def slow_judge(system, prompt):
-        scoring_started.set()
-        scoring_gate.wait(timeout=5)
-        return '{"score": 4.5, "explanation": "Great workflow"}'
-
+    Per-action judging is controlled by JudgeConfig on each action, not by the
+    session-level judge.
+    """
     prov = MagicMock()
-    prov.judge = slow_judge
+    prov.judge.return_value = '{"score": 4.5, "explanation": "Great workflow"}'
 
     @action(goal="do work")
     def do_work() -> str:
         return "result"
 
-    t0 = time.perf_counter()
-    with trace_session(goal="test goal", judge=prov, persist=False) as session:
+    with trace_session(goal="test goal", judge=prov) as session:
         do_work()
-    elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    # Session exited without waiting for the judge
-    assert elapsed_ms < 500
-    assert session.session_score is None
-
-    # Let the judge finish and verify score is written back
-    scoring_started.wait(timeout=5)
-    scoring_gate.set()
-    time.sleep(0.2)
+    # No per-action JudgeConfig was set, so actions remain unscored.
+    assert session.actions[0].score is None
     assert session.session_score == 4.5
     assert "Great workflow" in session.session_score_explanation
 
-
-def test_session_persisted_before_scoring():
-    """Session should be in storage immediately on exit, even before scoring finishes."""
-    scoring_gate = threading.Event()
-
-    def slow_judge(system, prompt):
-        scoring_gate.wait(timeout=5)
-        return '{"score": 3.0, "explanation": "ok"}'
-
-    prov = MagicMock()
-    prov.judge = slow_judge
-
-    @action(goal="do work")
-    def do_work() -> str:
-        return "result"
-
-    with trace_session(goal="test", judge=prov) as session:
-        do_work()
-
-    # Session is persisted immediately (before scoring completes)
     results = store_traces(trace_id=session.trace_id)
     assert len(results) == 1
-    assert results[0].session_score is None  # not scored yet
-
-    # Let scoring finish and check re-persist
-    scoring_gate.set()
-    time.sleep(0.3)
-    results = store_traces(trace_id=session.trace_id)
-    assert results[0].session_score == 3.0
+    assert results[0].session_score == 4.5
 
 
 # ── migration from v0 ────────────────────────────────────────────────
