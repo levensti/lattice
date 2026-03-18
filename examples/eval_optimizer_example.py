@@ -36,7 +36,7 @@ def evaluate(text: str) -> dict:
 
 
 def main():
-    lattice.configure(db_path="./.lattice/traces_v2.db")
+    lattice.configure(db_path="./.lattice/traces.db")
     topic = "Python programming"
     result = None
     feedback = None

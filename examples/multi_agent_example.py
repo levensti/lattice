@@ -44,7 +44,7 @@ def editor(article: str) -> str:
 
 
 def main():
-    lattice.configure(db_path="./.lattice/traces_v2.db")
+    lattice.configure(db_path="./.lattice/traces.db")
     with trace_session(goal="Produce a high-quality, publication-ready article about the given topic") as session:
         research = researcher("Python programming")
         draft = writer(research)
