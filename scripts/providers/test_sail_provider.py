@@ -238,6 +238,10 @@ def tool_router(scratchpad: str) -> str:
     )
 
 
+@action(
+    goal="Search the web for relevant information",
+    role="tool",
+)
 def _tool_web_search(query: str) -> str:
     prompt = (
         "Pretend you are a web search tool that returns concise bullet points.\n"
@@ -251,6 +255,10 @@ def _tool_web_search(query: str) -> str:
     )
 
 
+@action(
+    goal="Search the codebase for relevant APIs and modules",
+    role="tool",
+)
 def _tool_code_search(query: str) -> str:
     prompt = (
         "Pretend you are a code search tool over a large codebase.\n"
@@ -264,6 +272,10 @@ def _tool_code_search(query: str) -> str:
     )
 
 
+@action(
+    goal="Summarize documentation into key takeaways",
+    role="tool",
+)
 def _tool_doc_summarizer(text: str) -> str:
     prompt = (
         "Pretend you are a documentation summarizer.\n"
