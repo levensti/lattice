@@ -1,23 +1,69 @@
 # Lattice
 
-Lattice is a quality debugging framework for multi-agent systems. Annotate the actions in your workflow, score them with LLM-as-a-judge, and find exactly where quality degrades — without blocking your critical path.
+Quality debugging for multi-agent systems. Trace every action, score with LLM-as-a-judge, find exactly where quality breaks down.
 
-Designed for progressive adoption: start with tracing (zero config), add scoring when you're ready, and scale to production with background scoring. Works with any agent architecture — sequential pipelines, ReAct loops, parallel fan-outs, evaluator-optimizer patterns, state machines, and orchestrator-subagent hierarchies.
+```python
+import os
+from lattice import action, trace_session, score_trace, OpenAIProvider
+
+@action(goal="Return factual claims with sources")
+def researcher(topic: str) -> str:
+    return call_llm(f"Research {topic}")
+
+@action(goal="Write a structured article with intro, body, and conclusion")
+def writer(notes: str) -> str:
+    return call_llm(f"Write article from: {notes}")
+
+with trace_session(goal="Produce a well-researched article") as session:
+    notes = researcher("quantum computing")
+    article = writer(notes)
+
+score_trace(session, provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
+print(session)
+```
+
+```
+============================================================
+  Trace Summary  (trace_id=7f3a...)
+  Goal: Produce a well-researched article
+============================================================
+  ├── researcher  OK  823ms  score=4.0
+  │   reason: Returns 3 factual claims with Wikipedia and arXiv sources
+  └── writer  OK  651ms  score=2.0
+      reason: Missing conclusion, body is a single paragraph
+------------------------------------------------------------
+  Total actions: 2  |  Total time: 1474ms
+============================================================
+```
+
+- **Zero config to start** — `@action` + `trace_session` is all you need. Traces auto-persist to local SQLite.
+- **Any architecture** — sequential pipelines, ReAct loops, parallel fan-outs, state machines, orchestrator-subagent hierarchies.
+- **Structural analysis** — find cascading failures, non-converging loops, and weak parallel branches, not just individual bad scores.
+- **Non-blocking scoring** — per-action judging runs in background threads. Production scoring uses a daemon queue.
+- **One dependency** — just `httpx`. No server, no account, no setup.
 
 ## Install
 
 ```bash
-pip install -e .
+pip install lattice
+```
+
+Requires Python 3.10+. For development:
+
+```bash
+git clone https://github.com/your-org/lattice.git
+cd lattice
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
 
 ### 1. Trace your workflow
 
-Annotate functions with `@action` and wrap the workflow in `trace_session`. No API keys needed — traces are saved to a local SQLite database automatically.
+Annotate functions with `@action` and wrap the workflow in `trace_session`. No API keys needed — traces auto-persist to a local SQLite database.
 
 ```python
-from lattice import action, trace_session, print_trace_summary
+from lattice import action, trace_session
 
 @action
 def researcher(topic: str) -> str:
@@ -31,16 +77,17 @@ with trace_session(goal="Produce a well-researched article") as session:
     notes = researcher("quantum computing")
     article = writer(notes)
 
-print_trace_summary(session)
+print(session)
 ```
 
 This records inputs, outputs, latency, and parent-child relationships for every action. Browse results with `python -m lattice dashboard`.
 
-### 2. Add scoring
+### 2. Score and find bottlenecks
 
-When you're ready to evaluate quality, add a `goal` to each action and score with any LLM provider:
+Add a `goal` to each action and score with any LLM provider:
 
 ```python
+import os
 from lattice import action, trace_session, score_trace, OpenAIProvider
 
 @action(goal="Return at least 3 factual claims with sources")
@@ -56,31 +103,11 @@ with trace_session(goal="Produce a well-researched article") as session:
     article = writer(notes)
 
 # Score every action against its goal
-score_trace(session, provider=OpenAIProvider("gpt-4o"))
+score_trace(session, provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
 
 # Find structural issues
 for b in session.bottlenecks:
     print(f"{b.action_name}: {b.score:.1f} ({b.impact}) — {b.explanation}")
-```
-
-### 3. Score inline (non-blocking)
-
-For tighter feedback loops, attach a `JudgeConfig` directly to actions. Scoring happens in a background thread — the caller is never blocked:
-
-```python
-from lattice import action, trace_session, JudgeConfig, AnthropicProvider
-
-judge = JudgeConfig(
-    system_prompt="Score 1-5. Respond: {\"score\": N, \"explanation\": \"...\"}",
-    provider=AnthropicProvider("claude-sonnet-4-20250514"),
-)
-
-@action(goal="Return factual claims with sources", judge=judge)
-def researcher(topic: str) -> str:
-    return call_llm(f"Research {topic}")
-
-with trace_session(goal="Produce a well-researched article") as session:
-    notes = researcher("quantum computing")  # returns immediately, score computed in background
 ```
 
 ## Tracing
@@ -147,22 +174,22 @@ with trace_session(goal="Find and summarize relevant results") as session:
 
 ### More patterns
 
-| Pattern                    | How                                                        | Example                     |
-| -------------------------- | ---------------------------------------------------------- | --------------------------- |
-| State machine              | `trace_transition(to=..., reason=...)`                     | `state_machine_example.py`  |
-| Orchestrator + subagents   | Automatic from the call graph                              | `multi_agent_example.py`    |
-| Evaluator-optimizer        | `trace_iterations` with generator + evaluator actions       | `eval_optimizer_example.py` |
-| Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                           |
-| Thread-based parallelism   | `copy_trace_context()`                                     | —                           |
-| Retrofitting existing code | `instrument()` + `trace_action`                            | `retrofit_example.py`       |
+| Pattern                    | How                                                        | Example                        |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| State machine              | `trace_transition(to=..., reason=...)`                     | `state_machine_example.py`     |
+| Orchestrator + subagents   | Automatic from the call graph                              | `multi_agent_example.py`       |
+| Evaluator-optimizer        | `trace_iterations` with generator + evaluator actions      | `eval_optimizer_example.py`    |
+| Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                              |
+| Thread-based parallelism   | `copy_trace_context()`                                     | —                              |
+| Retrofitting existing code | `instrument()` + `trace_action`                            | `retrofit_example.py`          |
 
 ## Scoring
 
-Lattice is unopinionated about scoring — your rubric defines the scale, criteria, and format. There are three ways to score, depending on your needs:
+Lattice is unopinionated about scoring — your rubric defines the scale, criteria, and format. There are four ways to score, depending on your needs:
 
-### Inline scoring (per-action, non-blocking)
+### Per-action scoring (inline, non-blocking)
 
-Attach a `JudgeConfig` to any `@action` or `trace_action`. The action returns immediately; scoring runs in a daemon thread:
+Attach a `JudgeConfig` to any `@action` or `trace_action`. The action returns immediately; scoring runs in a daemon thread on session exit:
 
 ```python
 from lattice import JudgeConfig, AnthropicProvider
@@ -177,7 +204,7 @@ Score 3: 3 accurate bullets, one vague or incomplete.
 Score 5: 3 tight, distinct, fully accurate bullets.
 
 Respond with JSON: {"reasoning": "...", "score": <1-5>, "explanation": "..."}""",
-        provider=AnthropicProvider("claude-opus-4-6"),
+        provider=AnthropicProvider("claude-opus-4-6", api_key=os.environ["ANTHROPIC_API_KEY"]),
     ),
 )
 def summarise(paper): ...
@@ -190,7 +217,7 @@ When `judge=` is set, its `system_prompt` and `provider` override the global jud
 Score the entire workflow's output against its goal by passing `judge=` to `trace_session`. The session is persisted immediately, then re-persisted with the score once scoring completes in the background:
 
 ```python
-provider = OpenAIProvider("gpt-4o")
+provider = OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"])
 
 with trace_session(goal="Produce a publication-ready article", judge=provider) as session:
     notes = researcher("quantum computing")
@@ -203,7 +230,7 @@ Or score explicitly after the fact:
 ```python
 from lattice import score_session
 
-score, explanation = score_session(session, provider=OpenAIProvider("gpt-4o"))
+score, explanation = score_session(session, provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
 ```
 
 ### Batch scoring (after the fact)
@@ -213,12 +240,14 @@ Score every action in a completed session — useful for offline analysis or re-
 ```python
 from lattice import score_trace
 
-score_trace(session, provider=OpenAIProvider("gpt-4o"))
+provider = OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"])
+
+score_trace(session, provider=provider)
 
 # With a custom global rubric
 score_trace(
     session,
-    provider=OpenAIProvider("gpt-4o"),
+    provider=provider,
     system_prompt="You are a strict technical evaluator. ...",
 )
 ```
@@ -232,7 +261,7 @@ For production workloads, use `BackgroundScorer` to score off the critical path 
 ```python
 from lattice import BackgroundScorer, OpenAIProvider
 
-scorer = BackgroundScorer(provider=OpenAIProvider("gpt-4o"))
+scorer = BackgroundScorer(provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
 await scorer.start()
 
 # Per-request hot path — submit() is non-blocking
@@ -242,24 +271,26 @@ async def handle_request(query):
     scorer.submit(session)   # returns immediately
     return result
 
-# At shutdown — does not block
+# At shutdown
 await scorer.cancel()
 ```
 
 Or as an async context manager:
 
 ```python
-async with BackgroundScorer(provider=OpenAIProvider("gpt-4o")) as scorer:
+async with BackgroundScorer(provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"])) as scorer:
     await serve_forever(scorer)
 ```
 
-### Providers
+## Providers
 
-| Class                | Wire protocol                 | Typical env var              |
-| -------------------- | ----------------------------- | -----------------------------|
-| `OpenAIProvider`     | Chat Completions or Responses | `OPENAI_API_KEY`             |
-| `AnthropicProvider`  | Messages                      | `ANTHROPIC_API_KEY`          |
-| `OpenRouterProvider` | Chat Completions              | `OPENROUTER_API_KEY`         |
+### Built-in
+
+| Class                | Wire protocol                 |
+| -------------------- | ----------------------------- |
+| `OpenAIProvider`     | Chat Completions or Responses |
+| `AnthropicProvider`  | Messages                      |
+| `OpenRouterProvider` | Chat Completions              |
 
 ```python
 import os
@@ -272,7 +303,7 @@ OpenRouterProvider("google/gemini-2.0-flash", api_key=os.environ["OPENROUTER_API
 
 `OpenAIProvider` supports custom endpoints (Fireworks, Together, etc.) via `api_base=` and the newer Responses API via `api_type=ApiType.RESPONSES`.
 
-### Bring your own provider
+### Custom providers
 
 Subclass `InferenceProvider`, set `api_type`, and implement the matching method pair:
 
@@ -320,7 +351,7 @@ results = find_bottlenecks(session)
 | `"loop_no_convergence"` | Scores didn't improve across loop iterations                         |
 | `"weakest_branch"`      | Worst parallel branch, significantly below group average             |
 
-## Trace Persistence & Dashboard
+## Storage & Dashboard
 
 Traces are automatically saved to a local SQLite database (`~/.lattice/traces.db`) when a `trace_session` exits — no setup required.
 
@@ -344,16 +375,12 @@ python -m lattice dashboard              # starts at http://localhost:8080
 python -m lattice dashboard --port 3000  # custom port
 ```
 
-### Demo data
-
-Seed the store with rich example traces and explore the dashboard:
+Seed the store with demo data to explore:
 
 ```bash
 python scripts/seed_sqllite_traces.py
 python -m lattice dashboard
 ```
-
-Then visit [http://localhost:8080](http://localhost:8080) to explore multi-agent workflows, RAG pipelines, and more.
 
 ### Configuration
 
@@ -385,14 +412,26 @@ configure(backend=PostgresStore(os.environ["DATABASE_URL"]))
 
 ## Examples
 
-See `examples/`:
+All examples run without API keys (using mock LLM calls) unless noted otherwise.
 
-- **`multi_agent_example.py`** — Pipeline with scoring and bottleneck analysis
-- **`react_loop_example.py`** — ReAct loop with `trace_iterations`
-- **`parallel_fanout_example.py`** — Async fan-out with aggregation
-- **`eval_optimizer_example.py`** — Generator + evaluator refinement loop
-- **`state_machine_example.py`** — Router with transitions
-- **`retrofit_example.py`** — Adding tracing to existing code without modifying source
+| What you want to do                 | Example                       | Key concepts                                          |
+| ----------------------------------- | ----------------------------- | ----------------------------------------------------- |
+| Get started with a pipeline         | `multi_agent_example.py`      | `@action`, `score_trace`, `find_bottlenecks`          |
+| Add tracing to existing code        | `retrofit_example.py`         | `instrument()`, `trace_action`                        |
+| Trace a ReAct loop                  | `react_loop_example.py`       | `trace_iterations`                                    |
+| Trace parallel execution            | `parallel_fanout_example.py`  | `trace_parallel`, `asyncio.gather`                    |
+| Trace a state machine               | `state_machine_example.py`    | `trace_transition`                                    |
+| Generator + evaluator loop          | `eval_optimizer_example.py`   | `trace_iterations` with early `break`                 |
+| Full demo with real LLM calls       | `scored_react_demo.py`        | Per-action `JudgeConfig`, `judged_session` (needs API key) |
+
+## Contributing
+
+Contributions are welcome. Please open an issue to discuss significant changes before submitting a PR.
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
 
 ## License
 

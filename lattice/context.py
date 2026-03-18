@@ -173,6 +173,40 @@ def _judge_config_summary(judge: JudgeConfig) -> dict[str, Any]:
     return summary
 
 
+def _format_action_line(action: ActionRecord) -> str:
+    status = "ERROR" if action.error else "OK"
+    score_str = f"{action.score:.1f}" if action.score is not None else "-"
+    parts = [f"{action.name}  {status}  {action.latency_ms:.0f}ms  score={score_str}"]
+    if action.iteration is not None:
+        parts.append(f"iter={action.iteration}")
+    if action.activation_reason:
+        parts.append(f"activated: {action.activation_reason}")
+    return "  ".join(parts)
+
+
+def _format_tree(
+    node: ActionRecord,
+    children: dict[str | None, list["ActionRecord"]],
+    lines: list[str],
+    prefix: str = "",
+    is_last: bool = True,
+) -> None:
+    connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+    lines.append(f"{prefix}{connector}{_format_action_line(node)}")
+    detail_prefix = prefix + ("    " if is_last else "\u2502   ")
+    if node.error:
+        lines.append(f"{detail_prefix}error: {node.error}")
+    if node.score_explanation:
+        lines.append(f"{detail_prefix}reason: {node.score_explanation}")
+    child_nodes = children.get(node.span_id, [])
+    for i, child in enumerate(child_nodes):
+        _format_tree(
+            child, children, lines,
+            prefix=prefix + ("    " if is_last else "\u2502   "),
+            is_last=(i == len(child_nodes) - 1),
+        )
+
+
 @dataclass
 class TraceSession:
     """Groups multiple traced actions into a single debugging session."""
@@ -211,6 +245,74 @@ class TraceSession:
         """Lazily compute and return bottleneck analysis results."""
         from .bottleneck import find_bottlenecks
         return find_bottlenecks(self)
+
+    def __str__(self) -> str:
+        """Human-readable summary of the trace session."""
+        if not self.actions:
+            return "(no actions recorded)"
+
+        lines: list[str] = []
+        lines.append("")
+        lines.append("=" * 60)
+        title = self.workflow_name or "Trace Summary"
+        lines.append(f"  {title}  (trace_id={self.trace_id})")
+        if self.goal:
+            lines.append(f"  Goal: {self.goal}")
+        lines.append("=" * 60)
+
+        # Build parent-child tree
+        children_map: dict[str | None, list[ActionRecord]] = {}
+        for a in self.actions:
+            children_map.setdefault(a.parent_span_id, []).append(a)
+        roots = children_map.get(None, [])
+
+        for i, root in enumerate(roots):
+            _format_tree(root, children_map, lines, prefix="  ", is_last=(i == len(roots) - 1))
+
+        total_ms = sum(a.latency_ms for a in self.actions)
+        lines.append("-" * 60)
+        lines.append(f"  Total actions: {len(self.actions)}  |  Total time: {total_ms:.0f}ms")
+
+        if self.groups:
+            lines.append("  Groups:")
+            for g in self.groups:
+                symbol = "\u27f3" if g.group_type == "loop" else "\u2225"
+                group_steps = [a for a in self.actions if a.group_id == g.group_id]
+                action_count = len(group_steps)
+                if g.group_type == "loop":
+                    iters = {a.iteration for a in group_steps if a.iteration is not None}
+                    iter_info = f", {len(iters)} iterations" if iters else ""
+                    lines.append(f"    {symbol} {g.name} ({action_count} steps{iter_info})")
+                else:
+                    lines.append(f"    {symbol} {g.name} ({action_count} branches)")
+
+        if self.transitions:
+            merged: dict[tuple[str | None, str], TransitionRecord] = {}
+            for t in self.transitions:
+                key = (t.from_span_id, t.to_name)
+                existing = merged.get(key)
+                if existing is None or (existing.auto and not t.auto):
+                    merged[key] = t
+            display = [t for t in merged.values() if not t.auto or t.reason]
+            if display:
+                lines.append("  Transitions:")
+                for t in display:
+                    from_name = "?"
+                    if t.from_span_id:
+                        from_step = next(
+                            (a for a in self.actions if a.span_id == t.from_span_id), None
+                        )
+                        from_name = from_step.name if from_step else t.from_span_id
+                    reason = f': "{t.reason}"' if t.reason else ""
+                    lines.append(f"    {from_name} \u2192 {t.to_name}{reason}")
+
+        if self.session_score is not None:
+            lines.append(f"  Session score: {self.session_score:.1f}")
+            if self.session_score_explanation:
+                lines.append(f"  Verdict: {self.session_score_explanation}")
+        lines.append("=" * 60)
+        lines.append("")
+        return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the session to a plain dict (suitable for JSON)."""

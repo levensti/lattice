@@ -10,7 +10,6 @@ Usage:
 import asyncio
 
 from lattice import (
-    print_trace_summary,
     action,
     trace_parallel,
     trace_session,
@@ -56,7 +55,7 @@ async def main():
 
         summary = await aggregate(list(results))
 
-    print_trace_summary(session)
+    print(session)
     print(f"Result: {summary}")
 
 

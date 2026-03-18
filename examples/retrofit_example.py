@@ -9,7 +9,7 @@ Usage:
     python examples/retrofit_example.py
 """
 
-from lattice import action, instrument, print_trace_summary, trace_session, trace_action
+from lattice import action, instrument, trace_session, trace_action
 
 
 # === Existing code (imagine this lives in another module) ================
@@ -57,7 +57,7 @@ def main():
             api_result = external_api_call("Python advanced")
             ts.set_output(api_result)
 
-    print_trace_summary(session)
+    print(session)
     print(f"Agent result: {result}")
     print(f"API result: {api_result}")
 
@@ -76,7 +76,7 @@ def main():
         agent2 = TracedAgent()
         agent2.process("hello")
 
-    print_trace_summary(session)
+    print(session)
     print(f"Input recorded: {session.actions[0].input_data}")
     print("(Note: 'self' is excluded from the traced input)")
 
