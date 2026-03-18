@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS actions (
     trace_id          TEXT NOT NULL REFERENCES traces ON DELETE CASCADE,
     span_id           TEXT NOT NULL,
     name              TEXT NOT NULL,
+    actor_name        TEXT,
+    actor_id          TEXT,
     goal              TEXT NOT NULL DEFAULT '',
     input_data        TEXT NOT NULL DEFAULT '',
     output_data       TEXT NOT NULL DEFAULT '',
@@ -135,9 +137,29 @@ class SQLiteStore(Store):
 
         conn.executescript(_SCHEMA)
         conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            self._ensure_schema(conn)
+        except sqlite3.OperationalError:
+            # If the DB is read-only (or otherwise not writable), we should still
+            # be able to browse existing traces.
+            pass
         self._local.conn = conn
         self._local.path = self._db_path
         return conn
+
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply lightweight migrations for older DBs."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)").fetchall()}
+        try:
+            if "actor_name" not in cols:
+                conn.execute("ALTER TABLE actions ADD COLUMN actor_name TEXT")
+            if "actor_id" not in cols:
+                conn.execute("ALTER TABLE actions ADD COLUMN actor_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_actor_id ON actions (actor_id)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Don't break read paths if migrations can't be applied.
+            return
 
     # ── Store interface ───────────────────────────────────────────────
 
@@ -174,15 +196,17 @@ class SQLiteStore(Store):
             jc_json = json.dumps(jc) if jc else None
             conn.execute(
                 "INSERT INTO actions (trace_id, span_id, name, "
-                "goal, input_data, output_data, action_index, latency_ms, "
+                "actor_name, actor_id, goal, input_data, output_data, action_index, latency_ms, "
                 "parent_span_id, score, score_explanation, error, "
                 "group_id, iteration, activation_reason, started_at, ended_at, "
                 "judge_config, judge_provider, judge_model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.trace_id,
                     a.span_id,
                     a.name,
+                    a.actor_name,
+                    a.actor_id,
                     a.goal,
                     a.input_data,
                     a.output_data,
@@ -264,8 +288,11 @@ class SQLiteStore(Store):
         ph = ",".join("?" * len(trace_ids))
 
         # Batch-fetch child data
+        action_cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)").fetchall()}
+        has_actor = "actor_name" in action_cols and "actor_id" in action_cols
+        actor_select = "actor_name, actor_id" if has_actor else "NULL AS actor_name, NULL AS actor_id"
         action_rows = conn.execute(
-            f"SELECT trace_id, span_id, name, goal, "
+            f"SELECT trace_id, span_id, name, {actor_select}, goal, "
             f"input_data, output_data, action_index, latency_ms, "
             f"parent_span_id, score, score_explanation, error, "
             f"group_id, iteration, activation_reason, started_at, ended_at, "
@@ -302,25 +329,27 @@ class SQLiteStore(Store):
         actions_by_trace: dict[str, list[ActionRecord]] = defaultdict(list)
         for row in action_rows:
             tid, sid = row[0], row[1]
-            jc_json = row[17]
+            jc_json = row[19]
             actions_by_trace[tid].append(
                 ActionRecord(
                     span_id=sid,
                     name=row[2],
-                    goal=row[3],
-                    input_data=row[4],
-                    output_data=row[5],
-                    action_index=row[6],
-                    latency_ms=row[7],
-                    parent_span_id=row[8],
-                    score=row[9],
-                    score_explanation=row[10],
-                    error=row[11],
-                    group_id=row[12],
-                    iteration=row[13],
-                    activation_reason=row[14],
-                    started_at=row[15],
-                    ended_at=row[16],
+                    actor_name=row[3],
+                    actor_id=row[4],
+                    goal=row[5],
+                    input_data=row[6],
+                    output_data=row[7],
+                    action_index=row[8],
+                    latency_ms=row[9],
+                    parent_span_id=row[10],
+                    score=row[11],
+                    score_explanation=row[12],
+                    error=row[13],
+                    group_id=row[14],
+                    iteration=row[15],
+                    activation_reason=row[16],
+                    started_at=row[17],
+                    ended_at=row[18],
                     judge_config=json.loads(jc_json) if jc_json else None,
                     judge_result=jr_by_action.get((tid, sid)),
                 )

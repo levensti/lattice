@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from typing import TYPE_CHECKING
 
 from .bottleneck import find_bottlenecks
+from .session_insights import analyze_session
 from .storage.store import traces
 
 if TYPE_CHECKING:
@@ -174,6 +175,9 @@ def _render_node_card(action: ActionRecord) -> str:
     score = _score_pill(action.score)
     judge_config = action.judge_config
     judge_badge = _judge_model_badge(judge_config)
+    actor_badge = ""
+    if getattr(action, "actor_id", None):
+        actor_badge = f'<span class="actor-badge">{html.escape(str(action.actor_id))}</span>'
 
     error_html = ""
     if action.error:
@@ -225,9 +229,9 @@ def _render_node_card(action: ActionRecord) -> str:
 
     err_cls = " hnode-err" if action.error else ""
     return (
-        f'<div class="hnode{err_cls}">'
+        f'<div class="hnode{err_cls}" id="span-{html.escape(action.span_id)}" data-span="{html.escape(action.span_id)}">'
         f'<div class="hnode-head">'
-        f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span></div>'
+        f'<div class="hnode-title">{dot}<span class="hnode-name">{name_esc}</span>{actor_badge}</div>'
         f'</div>'
         f'<div class="hnode-meta-row"><span class="hnode-latency">{latency}</span></div>'
         f'{time_html}'
@@ -346,6 +350,7 @@ def _build_trace_detail(session: TraceSession) -> str:
         {explanation}
         {stats}
 
+        {_build_session_insights_section(session)}
         <div class="section">
             <h3>Action Tree</h3>
             <div class="tree-container">{tree_html}</div>
@@ -408,8 +413,76 @@ def _build_bottleneck_section(session: TraceSession) -> str:
         )
     return f"""
     <div class="section">
-        <h3>Bottlenecks</h3>
+        <h3>Bottlenecks (legacy)</h3>
         <div class="bottleneck-list">{"".join(items)}</div>
+    </div>
+    """
+
+
+# ── session insights ────────────────────────────────────────────────────
+
+
+_INSIGHT_COLORS = {
+    "error_streak": "#dc2626",
+    "low_score_streak": "#ca8a04",
+    "quality_cascade_chain": "#7c3aed",
+    "loop_no_convergence": "#ca8a04",
+    "parallel_imbalance": "#ea580c",
+    "routing_thrashing": "#0ea5e9",
+    "latency_spike": "#64748b",
+}
+
+
+def _insight_type_label(t: str) -> str:
+    return t.replace("_", " ")
+
+
+def _evidence_chips(span_ids: list[str], max_chips: int = 8) -> str:
+    if not span_ids:
+        return ""
+    chips = []
+    for sid in span_ids[:max_chips]:
+        esc = html.escape(sid)
+        chips.append(
+            f'<button class="chip" data-jump="{esc}" title="Jump to action">{esc[:8]}</button>'
+        )
+    more = ""
+    if len(span_ids) > max_chips:
+        more = f'<span class="muted">+{len(span_ids) - max_chips} more</span>'
+    return f'<div class="chips">{"".join(chips)}{more}</div>'
+
+
+def _build_session_insights_section(session: TraceSession) -> str:
+    insights = analyze_session(session)
+    if not insights:
+        return ""
+
+    items: list[str] = []
+    for ins in insights[:12]:
+        color = _INSIGHT_COLORS.get(ins.insight_type, "#a1a1aa")
+        sev = max(1, min(5, int(ins.severity)))
+        sev_bar = '<span class="sev">' + ("█" * sev) + ("░" * (5 - sev)) + "</span>"
+        items.append(
+            f'<div class="insight-item">'
+            f'<div class="insight-head">'
+            f'<span class="insight-type" style="color:{color}">{html.escape(_insight_type_label(ins.insight_type))}</span>'
+            f'<span class="insight-sev">{sev_bar}</span>'
+            f'</div>'
+            f'<div class="insight-title">{html.escape(ins.title)}</div>'
+            f'<div class="insight-summary">{html.escape(ins.summary)}</div>'
+            f'{_evidence_chips(ins.evidence_span_ids)}'
+            f'</div>'
+        )
+
+    return f"""
+    <div class="section">
+        <h3>Session insights</h3>
+        <div class="insight-list">
+            {"".join(items)}
+        </div>
+        <div class="muted insight-footnote">
+            Click a chip to jump to the referenced action in the tree.
+        </div>
     </div>
     """
 
@@ -820,6 +893,22 @@ body {
     white-space: nowrap;
 }
 
+/* ── Actor badge ───────────────────────────────────────────── */
+
+.actor-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(124, 58, 237, 0.06);
+    border: 1px solid rgba(124, 58, 237, 0.18);
+    color: #7c3aed;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-weight: 600;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
 .rubric-section {
     margin-top: 4px;
     padding-top: 4px;
@@ -918,6 +1007,53 @@ details summary {
 .bottleneck-impact { font-weight: 600; font-size: 11px; }
 .bottleneck-expl { color: var(--text-muted); font-size: 11px; margin-left: auto; }
 
+.insight-list { display: flex; flex-direction: column; gap: 10px; }
+.insight-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+}
+.insight-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+.insight-type {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.insight-sev .sev {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: "SF Mono", "Fira Code", monospace;
+}
+.insight-title { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.insight-summary { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.insight-footnote { margin-top: 8px; font-size: 11px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.chip {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-family: "SF Mono", "Fira Code", monospace;
+}
+.chip:hover { border-color: var(--border-light); background: var(--surface-3); }
+
+.hnode-highlight {
+    outline: 2px solid rgba(99,102,241,0.55);
+    box-shadow: 0 0 0 4px rgba(99,102,241,0.12);
+}
+
 .muted { color: var(--text-muted); }
 
 /* ── Empty state ───────────────────────────────────────────── */
@@ -954,6 +1090,29 @@ td {
     vertical-align: top;
 }
 tr:hover td { background: var(--surface-2); }
+"""
+
+
+_JS = r"""
+(() => {
+  function jumpToSpan(spanId) {
+    const el = document.getElementById("span-" + spanId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    el.classList.add("hnode-highlight");
+    window.setTimeout(() => el.classList.remove("hnode-highlight"), 1400);
+  }
+
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+    const btn = t.closest("[data-jump]");
+    if (!btn) return;
+    const spanId = btn.getAttribute("data-jump");
+    if (!spanId) return;
+    jumpToSpan(spanId);
+  });
+})();
 """
 
 
@@ -1012,6 +1171,7 @@ def _render_page(trace_id: str | None = None) -> str:
     <div class="main">
         {detail}
     </div>
+    <script>{_JS}</script>
 </body>
 </html>"""
 

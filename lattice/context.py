@@ -118,6 +118,8 @@ class ActionRecord:
     output_data: str
     action_index: int
     latency_ms: float
+    actor_name: str | None = None
+    actor_id: str | None = None
     parent_span_id: str | None = None
     score: float | None = None
     score_explanation: str | None = None
@@ -597,6 +599,9 @@ def trace_session(
                 for a in session.actions:
                     if a.error is None and a.judge is not None:
                         _score_single_action(a, a.judge.provider, a.judge.system_prompt)
+            except ImportError:
+                # Judge deps (e.g., httpx) are optional; tracing should still work.
+                pass
             except Exception:
                 logger.warning(
                     "Per-action scoring failed for trace %s",
