@@ -16,22 +16,29 @@ from __future__ import annotations
 
 import os
 import json
-from datetime import datetime, timezone
 from typing import Dict, Any
 
 import httpx
 
 from lattice import (
     action,
-    trace_session,
+    judged_session,
     trace_iterations,
     trace_parallel,
-    score_session,
     traces,
+    JudgeConfig,
+)
+from scripts.providers.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    ORCHESTRATOR_RUBRIC,
+    PLANNER_RUBRIC,
+    RETRIEVER_RUBRIC,
+    ROUTER_RUBRIC,
+    SESSION_RUBRIC,
+    WRITER_RUBRIC,
 )
 from lattice.bottleneck import find_bottlenecks
 from lattice.judge.providers import InferenceProvider, ApiType
-from lattice.judge.scorer import _score_single_action
 
 
 # ── Sail configuration ─────────────────────────────────────────────────────────
@@ -40,10 +47,8 @@ SAIL_API_KEY = os.environ.get("SAIL_API_KEY")
 if not SAIL_API_KEY:
     raise RuntimeError("Please set SAIL_API_KEY in your environment before running this script.")
 
-SAIL_API_BASE = "https://api.sailresearch.com/v1"
-
-AGENT_MODEL = "openai/gpt-oss-20b"
-JUDGE_MODEL = "openai/gpt-oss-20b"
+SAIL_API_BASE = "https://staging.sailresearch.com/v1"
+TEST_MODEL = "openai/gpt-oss-120b"
 
 
 # ── SailProvider — custom InferenceProvider for Sail's Responses API ──────────
@@ -139,26 +144,28 @@ class SailProvider(InferenceProvider):
 # ── Sail helpers ──────────────────────────────────────────────────────────────
 
 
-def sail_chat_completions(
+def sail_responses(
     *,
     model: str,
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.2,
 ) -> str:
-    """Thin wrapper around Sail's Chat Completions endpoint for agent calls."""
-    url = f"{SAIL_API_BASE}/chat/completions"
+    """Call Sail's Responses API (POST /v1/responses) synchronously."""
+    url = f"{SAIL_API_BASE}/responses"
     headers = {
         "Authorization": f"Bearer {SAIL_API_KEY}",
         "Content-Type": "application/json",
     }
     payload: Dict[str, Any] = {
         "model": model,
-        "messages": [
+        "input": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": temperature,
+        "background": False,
+        "metadata": {"completion_window": "asap"},
     }
 
     try:
@@ -166,7 +173,12 @@ def sail_chat_completions(
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            for block in data["output"]:
+                if block.get("type") == "message":
+                    for content in block["content"]:
+                        if content.get("type") == "output_text":
+                            return content["text"]
+            raise ValueError(f"No output_text block in Sail response: {data}")
     except httpx.RequestError as exc:
         raise RuntimeError(
             f"Error calling Sail at {url}: {exc}. "
@@ -177,7 +189,7 @@ def sail_chat_completions(
 # ── Lattice judge provider (via Sail Responses API) ───────────────────────────
 
 judge_provider = SailProvider(
-    model=JUDGE_MODEL,
+    model=TEST_MODEL,
     api_key=SAIL_API_KEY,
     temperature=0.1,
     background=False,
@@ -187,26 +199,30 @@ judge_provider = SailProvider(
 
 # ── Subagents / tools ─────────────────────────────────────────────────────────
 
-AGENT_SYSTEM_PROMPT = """You are a helpful research assistant.
-Follow the instructions carefully and reason step by step when useful.
-"""
 
-
-@action(goal="Produce a set of concrete sub-goals from the user's query", role="planner")
+@action(
+    goal="Produce a set of concrete sub-goals from the user's query",
+    role="planner",
+    judge=JudgeConfig(system_prompt=PLANNER_RUBRIC, provider=judge_provider),
+)
 def planner(user_query: str) -> str:
     prompt = (
         "You are a planning agent.\n"
         f"User query: {user_query}\n\n"
         "Break this into 3-5 numbered sub-goals for a research pipeline."
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
     )
 
 
-@action(goal="Choose which tools to call next given the current scratchpad", role="router")
+@action(
+    goal="Choose which tools to call next given the current scratchpad",
+    role="router",
+    judge=JudgeConfig(system_prompt=ROUTER_RUBRIC, provider=judge_provider),
+)
 def tool_router(scratchpad: str) -> str:
     prompt = (
         "You are a tool router in a ReAct loop.\n"
@@ -215,8 +231,8 @@ def tool_router(scratchpad: str) -> str:
         f"Scratchpad:\n{scratchpad}\n\n"
         "Respond with a JSON object with keys: \"thought\", \"tools\" (list of tool names to call).\n"
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
     )
@@ -228,8 +244,8 @@ def _tool_web_search(query: str) -> str:
         f"Query: {query}\n"
         "Return 3-5 bullet points of relevant information. Do NOT browse the real web."
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt="You are a search abstraction.",
         user_prompt=prompt,
     )
@@ -241,8 +257,8 @@ def _tool_code_search(query: str) -> str:
         f"Query: {query}\n"
         "Return a few bullet points describing relevant APIs or modules that might help."
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt="You are a code search abstraction.",
         user_prompt=prompt,
     )
@@ -254,8 +270,8 @@ def _tool_doc_summarizer(text: str) -> str:
         "Summarize the following text into 3-4 key takeaways:\n\n"
         f"{text}"
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt="You are a documentation summarizer.",
         user_prompt=prompt,
     )
@@ -265,6 +281,7 @@ def _tool_doc_summarizer(text: str) -> str:
     goal="Gather multi-source evidence relevant to the query",
     role="retriever",
     tags=["parallel", "multi-source"],
+    judge=JudgeConfig(system_prompt=RETRIEVER_RUBRIC, provider=judge_provider),
 )
 def multi_source_retriever(user_query: str) -> Dict[str, str]:
     """Fan out to multiple tools in a traced parallel block and return combined notes."""
@@ -281,7 +298,11 @@ def multi_source_retriever(user_query: str) -> Dict[str, str]:
     return notes
 
 
-@action(goal="Synthesize a final answer from notes and reasoning", role="writer")
+@action(
+    goal="Synthesize a final answer from notes and reasoning",
+    role="writer",
+    judge=JudgeConfig(system_prompt=WRITER_RUBRIC, provider=judge_provider),
+)
 def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
     prompt = (
         "You are the final synthesis agent in a ReAct-style pipeline.\n"
@@ -292,8 +313,8 @@ def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
         "Write a clear, structured answer that directly addresses the user's query.\n"
         "Use headings and bullet points where helpful."
     )
-    return sail_chat_completions(
-        model=AGENT_MODEL,
+    return sail_responses(
+        model=TEST_MODEL,
         system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
     )
@@ -301,34 +322,27 @@ def synthesizer(user_query: str, notes: Dict[str, str], scratchpad: str) -> str:
 
 # ── ReAct-style orchestrator ──────────────────────────────────────────────────
 
-
-def _log_action(name: str, *, done: bool = False) -> None:
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    tag = "DONE" if done else "START"
-    print(f"  [{ts} UTC] {tag:>5}  {name}")
-
-
 MAX_ITERATIONS = 3
 
 
-@action(goal="Run a ReAct-style loop to answer the user's question", role="orchestrator")
+@action(
+    goal="Run a ReAct-style loop to answer the user's question",
+    role="orchestrator",
+    judge=JudgeConfig(system_prompt=ORCHESTRATOR_RUBRIC, provider=judge_provider),
+)
 def react_orchestrator(user_query: str) -> Dict[str, Any]:
     """Coordinate planner, router, retriever, and synthesizer in a small ReAct loop."""
     scratchpad = ""
     history: list[Dict[str, Any]] = []
 
-    _log_action("planner")
     plan = planner(user_query)
-    _log_action("planner", done=True)
     scratchpad += f"PLAN:\n{plan}\n\n"
     history.append({"step": "plan", "content": plan})
 
     notes: Dict[str, str] = {}
 
     for i in trace_iterations("react_loop", range(MAX_ITERATIONS)):
-        _log_action(f"tool_router (iter {i})")
         route_raw = tool_router(scratchpad)
-        _log_action(f"tool_router (iter {i})", done=True)
         history.append({"step": f"route_{i}", "content": route_raw})
 
         try:
@@ -343,18 +357,14 @@ def react_orchestrator(user_query: str) -> Dict[str, Any]:
         scratchpad += f"[loop {i}] TOOLS: {tools}\n"
 
         if any(t in {"web_search", "code_search", "doc_summarizer"} for t in tools):
-            _log_action(f"multi_source_retriever (iter {i})")
             notes = multi_source_retriever(user_query)
-            _log_action(f"multi_source_retriever (iter {i})", done=True)
             history.append({"step": f"retrieval_{i}", "content": notes})
             scratchpad += f"[loop {i}] RETRIEVAL_NOTES:\n{json.dumps(notes, indent=2)}\n\n"
         else:
             scratchpad += f"[loop {i}] Router did not request known tools; stopping.\n"
             break
 
-    _log_action("synthesizer")
     final_answer = synthesizer(user_query, notes=notes, scratchpad=scratchpad)
-    _log_action("synthesizer", done=True)
     history.append({"step": "final_answer", "content": final_answer})
 
     return {
@@ -365,81 +375,22 @@ def react_orchestrator(user_query: str) -> Dict[str, Any]:
     }
 
 
-# ── Scoring configuration ─────────────────────────────────────────────────────
-
-SESSION_RUBRIC = """You are a strict technical judge scoring an answer from 1–5.
-
-Score 1: Completely incorrect, off-topic, or missing.
-Score 2: Major inaccuracies or omissions; barely useful.
-Score 3: Mostly correct but with notable gaps or lack of depth.
-Score 4: Correct and helpful with minor gaps.
-Score 5: Exceptionally clear, thorough, and accurate.
-
-Respond with JSON: {"score": <1-5>, "explanation": "..."}.
-"""
-
-
-def run_react_session(query: str):
-    with trace_session(
-        goal="Answer the user's research question accurately and comprehensively",
-        workflow_name="ReAct multi-agent demo (Sail)",
-    ) as session:
-        result = react_orchestrator(query)
-    return session, result
-
-
-def score_entire_session(sess) -> None:
-    print("Scoring individual actions with Sail judge...\n")
-    for a in sess.actions:
-        if a.error is not None:
-            print(f"    {a.name}: skipped (error)")
-            continue
-        _log_action(f"judge → {a.name}")
-        _score_single_action(a, judge_provider, SESSION_RUBRIC)
-        _log_action(f"judge → {a.name}", done=True)
-        print(f"    {a.name}: {a.score}/5")
-
-    print()
-    _log_action("judge → session")
-    overall_score, explanation = score_session(
-        sess,
-        provider=judge_provider,
-        system_prompt=SESSION_RUBRIC,
-    )
-    _log_action("judge → session", done=True)
-    print(f"\nSession score: {overall_score:.1f}/5")
-    print(f"Explanation: {explanation}\n")
-
-    print("Potential bottlenecks:")
-    b_list = list(find_bottlenecks(sess))
-    if not b_list:
-        print("- None detected")
-    else:
-        for b in b_list:
-            print(f"- {b.action_name}: {b.score}/5 ({b.impact}) — {b.explanation}")
-
-
 def main() -> None:
     user_query = "How could I use retrieval-augmented generation to debug complex multi-agent systems?"
 
-    print("Running ReAct-style session...\n")
-    session, result = run_react_session(user_query)
+    with judged_session(
+        goal="Answer the user's research question accurately and comprehensively",
+        workflow_name="ReAct multi-agent demo (Sail)",
+        judge=judge_provider,
+        judge_system_prompt=SESSION_RUBRIC,
+    ) as session:
+        result = react_orchestrator(user_query)
 
-    print("=== FINAL ANSWER (truncated) ===\n")
-    print(result["answer"][:2000])
-    print("\n" + "=" * 80 + "\n")
-
-    score_entire_session(session)
-
-    print("\nRecent traces:")
-    for t in traces(last=3):
-        print(f"- {t.trace_id} | {t.workflow_name} | actions={len(t.actions)} | score={t.session_score}")
-
-    print(
-        "\nTo explore visually, run:\n"
-        "  uv run python -m lattice dashboard\n"
-        "and open http://localhost:8787 in your browser."
-    )
+    print(f"Session score: {session.session_score}/5")
+    print(f"Explanation: {session.session_score_explanation}")
+    print("Actions:")
+    for a in session.actions:
+        print(f"- {a.name}: {a.score}/5")
 
 
 if __name__ == "__main__":

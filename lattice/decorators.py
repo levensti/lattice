@@ -4,7 +4,6 @@ import functools
 import inspect
 import json
 import logging
-import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -51,22 +50,6 @@ def _safe_serialize(obj: Any, max_length: int = 8192) -> str:
         return s[:max_length] + "...[truncated]"
     return s
 
-
-def _fire_and_forget_score(
-    action_record: ActionRecord,
-    judge: JudgeConfig,
-    name: str,
-) -> None:
-    """Score an action in a daemon thread — never blocks the caller."""
-    def _run() -> None:
-        try:
-            from .judge.scorer import _score_single_action
-            _score_single_action(action_record, judge.provider, judge.system_prompt)
-        except Exception:
-            logger.warning("Background scoring failed for action %s", name, exc_info=True)
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
 
 
 def _capture_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
@@ -209,10 +192,6 @@ def _complete_action(
             judge=judge, started_at=ctx["started_at"], ended_at=ended_at,
             **ctx["topo"],
         )
-        # Score in a background thread so the caller is never blocked
-        if judge is not None:
-            action_record = ctx["session"].actions[-1]
-            _fire_and_forget_score(action_record, judge, name)
     logger.info("Action completed: %s (%.1fms)", name, latency)
     logger.debug("Action %s output: %s", name, output_str[:500])
 
@@ -447,9 +426,6 @@ def trace_action(
                 judge=judge, started_at=started_at, ended_at=ended_at,
                 **topo,
             )
-            if judge is not None:
-                action_record = session.actions[-1]
-                _fire_and_forget_score(action_record, judge, name)
         logger.info("Action completed: %s (%.1fms)", name, latency)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
