@@ -22,7 +22,7 @@ from .base import Store
 
 DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces.db"
 
-_SCHEMA_V2 = """\
+_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS traces (
     trace_id                  TEXT PRIMARY KEY,
     workflow_name             TEXT NOT NULL DEFAULT '',
@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS actions (
     trace_id          TEXT NOT NULL REFERENCES traces ON DELETE CASCADE,
     span_id           TEXT NOT NULL,
     name              TEXT NOT NULL,
-    description       TEXT NOT NULL DEFAULT '',
     goal              TEXT NOT NULL DEFAULT '',
     input_data        TEXT NOT NULL DEFAULT '',
     output_data       TEXT NOT NULL DEFAULT '',
@@ -49,7 +48,6 @@ CREATE TABLE IF NOT EXISTS actions (
     score             REAL,
     score_explanation TEXT,
     error             TEXT,
-    role              TEXT,
     group_id          TEXT,
     iteration         INTEGER,
     activation_reason TEXT,
@@ -65,15 +63,6 @@ CREATE INDEX IF NOT EXISTS idx_actions_parent ON actions (trace_id, parent_span_
 CREATE INDEX IF NOT EXISTS idx_actions_score ON actions (score);
 CREATE INDEX IF NOT EXISTS idx_actions_judge_model ON actions (judge_model);
 CREATE INDEX IF NOT EXISTS idx_actions_group ON actions (trace_id, group_id);
-
-CREATE TABLE IF NOT EXISTS action_tags (
-    trace_id TEXT NOT NULL,
-    span_id  TEXT NOT NULL,
-    tag      TEXT NOT NULL,
-    FOREIGN KEY (trace_id, span_id) REFERENCES actions ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_action_tags_tag ON action_tags (tag);
-CREATE INDEX IF NOT EXISTS idx_action_tags_action ON action_tags (trace_id, span_id);
 
 CREATE TABLE IF NOT EXISTS judge_results (
     trace_id     TEXT NOT NULL,
@@ -144,14 +133,7 @@ class SQLiteStore(Store):
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
 
-        conn.executescript(_SCHEMA_V2)
-
-        # Migrate existing databases that lack the input_data column
-        try:
-            conn.execute("ALTER TABLE traces ADD COLUMN input_data TEXT")
-        except sqlite3.OperationalError:
-            pass  # column already exists
-
+        conn.executescript(_SCHEMA)
         conn.execute("PRAGMA foreign_keys=ON")
         self._local.conn = conn
         self._local.path = self._db_path
@@ -191,17 +173,16 @@ class SQLiteStore(Store):
             jc = a.judge_config
             jc_json = json.dumps(jc) if jc else None
             conn.execute(
-                "INSERT INTO actions (trace_id, span_id, name, description, "
+                "INSERT INTO actions (trace_id, span_id, name, "
                 "goal, input_data, output_data, action_index, latency_ms, "
-                "parent_span_id, score, score_explanation, error, role, "
+                "parent_span_id, score, score_explanation, error, "
                 "group_id, iteration, activation_reason, started_at, ended_at, "
                 "judge_config, judge_provider, judge_model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.trace_id,
                     a.span_id,
                     a.name,
-                    a.description,
                     a.goal,
                     a.input_data,
                     a.output_data,
@@ -211,7 +192,6 @@ class SQLiteStore(Store):
                     a.score,
                     a.score_explanation,
                     a.error,
-                    a.role,
                     a.group_id,
                     a.iteration,
                     a.activation_reason,
@@ -222,12 +202,6 @@ class SQLiteStore(Store):
                     str(jc.get("model")) if jc and jc.get("model") is not None else None,
                 ),
             )
-            for tag in a.tags:
-                conn.execute(
-                    "INSERT INTO action_tags (trace_id, span_id, tag) "
-                    "VALUES (?, ?, ?)",
-                    (session.trace_id, a.span_id, tag),
-                )
             if a.judge_result:
                 jr = a.judge_result
                 conn.execute(
@@ -291,18 +265,12 @@ class SQLiteStore(Store):
 
         # Batch-fetch child data
         action_rows = conn.execute(
-            f"SELECT trace_id, span_id, name, description, goal, "
+            f"SELECT trace_id, span_id, name, goal, "
             f"input_data, output_data, action_index, latency_ms, "
-            f"parent_span_id, score, score_explanation, error, role, "
+            f"parent_span_id, score, score_explanation, error, "
             f"group_id, iteration, activation_reason, started_at, ended_at, "
             f"judge_config "
             f"FROM actions WHERE trace_id IN ({ph}) ORDER BY action_index",
-            trace_ids,
-        ).fetchall()
-
-        tag_rows = conn.execute(
-            f"SELECT trace_id, span_id, tag "
-            f"FROM action_tags WHERE trace_id IN ({ph})",
             trace_ids,
         ).fetchall()
 
@@ -324,11 +292,6 @@ class SQLiteStore(Store):
             trace_ids,
         ).fetchall()
 
-        # Index child data by keys
-        tags_by_action: dict[tuple[str, str], list[str]] = defaultdict(list)
-        for tid, sid, tag in tag_rows:
-            tags_by_action[(tid, sid)].append(tag)
-
         jr_by_action: dict[tuple[str, str], JudgeResult] = {}
         for tid, sid, score, explanation, name, model in jr_rows:
             if (tid, sid) not in jr_by_action:
@@ -339,29 +302,26 @@ class SQLiteStore(Store):
         actions_by_trace: dict[str, list[ActionRecord]] = defaultdict(list)
         for row in action_rows:
             tid, sid = row[0], row[1]
-            jc_json = row[19]
+            jc_json = row[17]
             actions_by_trace[tid].append(
                 ActionRecord(
                     span_id=sid,
                     name=row[2],
-                    description=row[3],
-                    goal=row[4],
-                    input_data=row[5],
-                    output_data=row[6],
-                    action_index=row[7],
-                    latency_ms=row[8],
-                    parent_span_id=row[9],
-                    score=row[10],
-                    score_explanation=row[11],
-                    error=row[12],
-                    role=row[13],
-                    group_id=row[14],
-                    iteration=row[15],
-                    activation_reason=row[16],
-                    started_at=row[17],
-                    ended_at=row[18],
+                    goal=row[3],
+                    input_data=row[4],
+                    output_data=row[5],
+                    action_index=row[6],
+                    latency_ms=row[7],
+                    parent_span_id=row[8],
+                    score=row[9],
+                    score_explanation=row[10],
+                    error=row[11],
+                    group_id=row[12],
+                    iteration=row[13],
+                    activation_reason=row[14],
+                    started_at=row[15],
+                    ended_at=row[16],
                     judge_config=json.loads(jc_json) if jc_json else None,
-                    tags=tags_by_action[(tid, sid)],
                     judge_result=jr_by_action.get((tid, sid)),
                 )
             )

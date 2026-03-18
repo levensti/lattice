@@ -22,13 +22,13 @@ DRAFTS = [
 ]
 
 
-@action(goal="Produce a clear, informative paragraph about the topic", role="generator")
+@action(goal="Produce a clear, informative paragraph about the topic")
 def generate(topic: str, feedback: str | None = None, attempt: int = 0) -> str:
     idx = min(attempt, len(DRAFTS) - 1)
     return DRAFTS[idx]
 
 
-@action(goal="Accurately assess quality and provide actionable feedback", role="evaluator")
+@action(goal="Accurately assess quality and provide actionable feedback")
 def evaluate(text: str) -> dict:
     if len(text) > 50:
         return {"pass": True, "score": 4, "feedback": "Good quality."}

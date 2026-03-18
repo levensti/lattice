@@ -26,7 +26,6 @@ class ActionPromptBuilder(Protocol):
         self,
         *,
         name: str,
-        description: str,
         goal: str,
         input_data: str,
         output_data: str,
@@ -49,7 +48,6 @@ class SessionPromptBuilder(Protocol):
 def build_judge_prompt(
     *,
     name: str,
-    description: str,
     goal: str,
     input_data: str,
     output_data: str,
@@ -59,8 +57,7 @@ def build_judge_prompt(
 
     return (
         f"Evaluate the following action output.\n\n"
-        f"**Action name:** {name}\n"
-        f"**Description:** {description or 'No description provided.'}\n\n"
+        f"**Action name:** {name}\n\n"
         f"**Action goal:**\n{goal_block}\n\n"
         f"**Input to the action:**\n{input_data[:MAX_FIELD_CHARS]}\n\n"
         f"**Output from the action:**\n{output_data[:MAX_FIELD_CHARS]}"

@@ -91,9 +91,6 @@ with trace_session(goal="Produce a well-researched article") as session:
 @action(goal="Must cite sources")
 def research(topic): ...
 
-@action(goal="Decide the next action", role="think")
-def think(state): ...
-
 # goal is optional when you just want tracing without scoring
 @action
 def preprocess(data): ...
@@ -154,7 +151,7 @@ with trace_session(goal="Find and summarize relevant results") as session:
 | -------------------------- | ---------------------------------------------------------- | --------------------------- |
 | State machine              | `trace_transition(to=..., reason=...)`                     | `state_machine_example.py`  |
 | Orchestrator + subagents   | Automatic from the call graph                              | `multi_agent_example.py`    |
-| Evaluator-optimizer        | `trace_iterations` with `role="generator"` / `"evaluator"` | `eval_optimizer_example.py` |
+| Evaluator-optimizer        | `trace_iterations` with generator + evaluator actions       | `eval_optimizer_example.py` |
 | Blackboard / event-driven  | `trace_activation(reason=...)`                             | —                           |
 | Thread-based parallelism   | `copy_trace_context()`                                     | —                           |
 | Retrofitting existing code | `instrument()` + `trace_action`                            | `retrofit_example.py`       |

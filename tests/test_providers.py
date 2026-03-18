@@ -192,7 +192,7 @@ def test_to_dict_excludes_private_counter():
 def test_to_dict_includes_actions():
     session = TraceSession(goal="g")
     session.add_action(ActionRecord(
-        span_id="s1", name="step1", description="", goal="g",
+        span_id="s1", name="step1", goal="g",
         input_data="in", output_data="out", action_index=0, latency_ms=10.0,
     ))
     d = session.to_dict()

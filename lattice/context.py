@@ -84,7 +84,7 @@ Respond with JSON only: {"reasoning": "...", "score": <1-5>, "explanation": "...
         provider: **Required.** :class:`~lattice.judge.providers.InferenceProvider`
             instance that handles the actual LLM call.
         action_prompt_builder: Custom callable that fully replaces the default
-            user prompt. Must accept ``name``, ``description``, ``goal``,
+            user prompt. Must accept ``name``, ``goal``,
             ``input_data``, ``output_data`` as keyword arguments and return a
             string.
     """
@@ -113,7 +113,6 @@ class ActionRecord:
 
     span_id: str
     name: str
-    description: str
     goal: str
     input_data: str
     output_data: str
@@ -123,8 +122,6 @@ class ActionRecord:
     score: float | None = None
     score_explanation: str | None = None
     error: str | None = None
-    tags: list[str] = field(default_factory=list)
-    role: str | None = None
     group_id: str | None = None
     iteration: int | None = None
     activation_reason: str | None = None

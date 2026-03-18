@@ -202,7 +202,7 @@ def test_transition_recorded():
 
 
 def test_transition_captures_from_span():
-    @action(action_id="src-span", goal="emit transition")
+    @action(goal="emit transition")
     def source() -> str:
         trace_transition(to="target", reason="go")
         return "done"
@@ -211,7 +211,7 @@ def test_transition_captures_from_span():
         source()
 
     manual = [t for t in session.transitions if not t.auto]
-    assert manual[0].from_span_id == "src-span"
+    assert manual[0].from_span_id == session.actions[0].span_id
 
 
 # ── trace_activation ──────────────────────────────────────────────────
@@ -245,37 +245,6 @@ def test_activation_reason_clears_after_context():
 
     assert session.actions[0].activation_reason == "event fired"
     assert session.actions[1].activation_reason is None
-
-
-# ── role parameter ────────────────────────────────────────────────────
-
-
-def test_role_recorded_on_step():
-    @action(goal="generate", role="generator")
-    def gen() -> str:
-        return "output"
-
-    @action(goal="evaluate", role="evaluator")
-    def eval_fn(text: str) -> dict:
-        return {"pass": True}
-
-    with trace_session(goal="test") as session:
-        text = gen()
-        eval_fn(text)
-
-    assert session.actions[0].role == "generator"
-    assert session.actions[1].role == "evaluator"
-
-
-def test_role_defaults_to_none():
-    @action(goal="plain work")
-    def plain() -> str:
-        return "x"
-
-    with trace_session(goal="test") as session:
-        plain()
-
-    assert session.actions[0].role is None
 
 
 # ── nesting ───────────────────────────────────────────────────────────

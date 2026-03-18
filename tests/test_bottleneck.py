@@ -7,7 +7,6 @@ def _action(name, index, score=None, error=None, latency_ms=100.0,
     return ActionRecord(
         span_id=span_id or f"span-{index}",
         name=name,
-        description="",
         goal="",
         input_data="",
         output_data="",

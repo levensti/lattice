@@ -16,7 +16,7 @@ from lattice import (
 )
 
 
-@action(goal="Must return results relevant to the query with at least 2 distinct sources", tags=["io", "external"])
+@action(goal="Must return results relevant to the query with at least 2 distinct sources")
 def web_search(query: str) -> list[dict]:
     return [
         {"title": "Python docs", "url": "https://docs.python.org", "snippet": "Official docs"},
@@ -24,19 +24,19 @@ def web_search(query: str) -> list[dict]:
     ]
 
 
-@action(goal="Must synthesize information from multiple sources into a coherent summary with citations", tags=["llm"])
+@action(goal="Must synthesize information from multiple sources into a coherent summary with citations")
 def researcher(topic: str) -> str:
     results = web_search(topic)
     sources = ", ".join(r["title"] for r in results)
     return f"Research on '{topic}': Based on {sources}, Python is a versatile language."
 
 
-@action(goal="Must produce a well-structured article with introduction, body, and conclusion", tags=["llm"])
+@action(goal="Must produce a well-structured article with introduction, body, and conclusion")
 def writer(research: str) -> str:
     return "Python is good."
 
 
-@action(goal="Must fix grammar, improve clarity, and ensure the article is publication-ready", tags=["llm"])
+@action(goal="Must fix grammar, improve clarity, and ensure the article is publication-ready")
 def editor(article: str) -> str:
     return (
         f"Edited: {article} Python is a versatile, beginner-friendly "
