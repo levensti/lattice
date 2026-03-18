@@ -20,7 +20,7 @@ from ..context import (
 )
 from .base import Store
 
-DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces.db"
+DEFAULT_DB_PATH = Path.home() / ".lattice" / "traces_v2.db"
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS traces (

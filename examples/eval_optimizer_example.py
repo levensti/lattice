@@ -7,11 +7,10 @@ Usage:
     python examples/eval_optimizer_example.py
 """
 
-from lattice import (
-    action,
-    trace_iterations,
-    trace_session,
-)
+import lattice
+
+from lattice.context import trace_iterations, trace_session
+from lattice.decorators import action
 
 DRAFTS = [
     "Python good.",
@@ -37,6 +36,7 @@ def evaluate(text: str) -> dict:
 
 
 def main():
+    lattice.configure(db_path="./.lattice/traces_v2.db")
     topic = "Python programming"
     result = None
     feedback = None
