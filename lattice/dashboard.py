@@ -17,7 +17,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 from typing import TYPE_CHECKING
 
-from .bottleneck import find_bottlenecks
 from .session_insights import analyze_session
 from .storage.store import traces
 
@@ -355,7 +354,6 @@ def _build_trace_detail(session: TraceSession) -> str:
             <h3>Action Tree</h3>
             <div class="tree-container">{tree_html}</div>
         </div>
-        {_build_bottleneck_section(session)}
     </div>
     """
 
@@ -382,40 +380,6 @@ def _build_trace_list_item(session: TraceSession, is_active: bool = False) -> st
         <div class="trace-meta">{action_count} actions {error_badge}</div>
         <div class="trace-date">{created}</div>
     </a>
-    """
-
-
-# ── bottlenecks ────────────────────────────────────────────────────────
-
-
-_IMPACT_COLORS = {
-    "error": "#dc2626",
-    "loop_no_convergence": "#ca8a04",
-    "weakest_branch": "#ea580c",
-}
-
-
-def _build_bottleneck_section(session: TraceSession) -> str:
-    bottlenecks = find_bottlenecks(session)
-    if not bottlenecks:
-        return ""
-    items = []
-    for b in bottlenecks:
-        color = _IMPACT_COLORS.get(b.impact, "#a1a1aa")
-        items.append(
-            f'<div class="bottleneck-item">'
-            f'<span class="bottleneck-name">{html.escape(b.action_name)}</span>'
-            f'<span class="bottleneck-impact" style="color:{color}">{html.escape(b.impact)}</span>'
-            f'{_score_pill(b.score)}'
-            f'<span class="muted">{b.latency_ms:.0f}ms</span>'
-            f'<span class="bottleneck-expl">{html.escape(b.explanation)}</span>'
-            f'</div>'
-        )
-    return f"""
-    <div class="section">
-        <h3>Bottlenecks (legacy)</h3>
-        <div class="bottleneck-list">{"".join(items)}</div>
-    </div>
     """
 
 
@@ -989,23 +953,6 @@ details summary {
     overflow-y: auto;
     font-family: "SF Mono", "Fira Code", monospace;
 }
-
-/* ── Bottlenecks ───────────────────────────────────────────── */
-
-.bottleneck-list { display: flex; flex-direction: column; gap: 4px; }
-.bottleneck-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-}
-.bottleneck-name { font-weight: 500; min-width: 120px; }
-.bottleneck-impact { font-weight: 600; font-size: 11px; }
-.bottleneck-expl { color: var(--text-muted); font-size: 11px; margin-left: auto; }
 
 .insight-list { display: flex; flex-direction: column; gap: 10px; }
 .insight-item {
