@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+import weakref
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from contextvars import Token
@@ -35,6 +36,8 @@ class _ActionContext(TypedDict):
     parent_id: str | None
     action_index: int
     topo: dict[str, Any]
+    actor_name: str | None
+    actor_id: str | None
     parent_token: Token[str | None]
     start: float
     started_at: str
@@ -76,6 +79,8 @@ def _record_action(
     *,
     span_id: str,
     name: str,
+    actor_name: str | None,
+    actor_id: str | None,
     goal: str,
     input_data: str,
     output_data: str,
@@ -93,6 +98,8 @@ def _record_action(
     session.add_action(ActionRecord(
         span_id=span_id,
         name=name,
+        actor_name=actor_name,
+        actor_id=actor_id,
         goal=goal,
         input_data=input_data,
         output_data=output_data,
@@ -125,6 +132,62 @@ def _read_topology_context() -> dict[str, Any]:
     }
 
 
+def _infer_actor(
+    session: TraceSession | None,
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+) -> tuple[str | None, str | None]:
+    """Infer actor identity without requiring users to pass IDs.
+
+    If this call looks like a bound method (first param is ``self``/``cls``),
+    derive an actor name from common attributes and assign a session-stable
+    instance id like ``Planner#1``.
+    """
+    if session is None or not args:
+        return (None, None)
+
+    try:
+        sig = inspect.signature(func)
+        params = list(sig.parameters.values())
+        if not params or params[0].name not in _SELF_CLS:
+            return (None, None)
+    except (TypeError, ValueError):
+        return (None, None)
+
+    obj = args[0]
+    raw_name = getattr(obj, "name", None) or getattr(obj, "agent_name", None)
+    actor_name = str(raw_name) if raw_name else type(obj).__name__
+
+    # Session-stable instance numbering (no UUIDs, no user work).
+    inst_map: weakref.WeakKeyDictionary[object, str] | None = getattr(  # type: ignore[attr-defined]
+        session, "_actor_instance_map", None
+    )
+    if inst_map is None:
+        inst_map = weakref.WeakKeyDictionary()
+        setattr(session, "_actor_instance_map", inst_map)  # type: ignore[attr-defined]
+    counters: dict[str, int] | None = getattr(session, "_actor_name_counters", None)  # type: ignore[attr-defined]
+    if counters is None:
+        counters = {}
+        setattr(session, "_actor_name_counters", counters)  # type: ignore[attr-defined]
+
+    try:
+        existing = inst_map.get(obj)
+    except TypeError:
+        # Fallback for non-weakrefable objects (rare).
+        existing = None
+    if existing is not None:
+        return (actor_name, existing)
+
+    n = counters.get(actor_name, 0) + 1
+    counters[actor_name] = n
+    actor_id = f"{actor_name}#{n}"
+    try:
+        inst_map[obj] = actor_id
+    except TypeError:
+        pass
+    return (actor_name, actor_id)
+
+
 def _begin_action(
     func: Callable[..., Any],
     args: tuple[Any, ...],
@@ -142,6 +205,7 @@ def _begin_action(
     parent_id = _current_span_id.get()
     action_index = session.next_index() if session else 0
     topo = _read_topology_context()
+    actor_name, actor_id = _infer_actor(session, func, args)
     parent_token = _current_span_id.set(span_id)
 
     logger.info("Action started: %s", name)
@@ -151,6 +215,7 @@ def _begin_action(
         "session": session, "input_str": input_str,
         "span_id": span_id, "parent_id": parent_id,
         "action_index": action_index, "topo": topo,
+        "actor_name": actor_name, "actor_id": actor_id,
         "parent_token": parent_token,
         "start": time.perf_counter(),
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -173,6 +238,7 @@ def _complete_action(
         _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
+            actor_name=ctx["actor_name"], actor_id=ctx["actor_id"],
             goal=goal,
             input_data=ctx["input_str"], output_data=output_str,
             action_index=ctx["action_index"], latency_ms=latency,
@@ -200,6 +266,7 @@ def _fail_action(
         _record_action(
             ctx["session"],
             span_id=ctx["span_id"], name=name,
+            actor_name=ctx["actor_name"], actor_id=ctx["actor_id"],
             goal=goal,
             input_data=ctx["input_str"], output_data="",
             action_index=ctx["action_index"], latency_ms=latency,
@@ -380,6 +447,7 @@ def trace_action(
             _record_action(
                 session,
                 span_id=span_id, name=name,
+                actor_name=None, actor_id=None,
                 goal=goal,
                 input_data=input_str, output_data=output_str,
                 action_index=action_index, latency_ms=latency,
@@ -396,6 +464,7 @@ def trace_action(
             _record_action(
                 session,
                 span_id=span_id, name=name,
+                actor_name=None, actor_id=None,
                 goal=goal,
                 input_data=input_str, output_data="",
                 action_index=action_index, latency_ms=latency,

@@ -8,12 +8,9 @@ Usage:
     python examples/multi_agent_example.py
 """
 
-from lattice import (
-    find_bottlenecks,
-    score_trace,
-    action,
-    trace_session,
-)
+from lattice.bottleneck import find_bottlenecks
+from lattice.context import trace_session
+from lattice.decorators import action
 
 
 @action(goal="Must return results relevant to the query with at least 2 distinct sources")
@@ -54,7 +51,7 @@ def main():
     print(f"Traced {len(session.actions)} actions\n")
 
     try:
-        from lattice import OpenAIProvider
+        from lattice import OpenAIProvider, score_trace
         import os
 
         score_trace(session, provider=OpenAIProvider("gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))
@@ -66,7 +63,7 @@ def main():
         print("\n=== Bottleneck Analysis ===")
         for b in find_bottlenecks(session):
             print(f"  {b.action_name} (score={b.score:.1f}, impact={b.impact}): {b.explanation}")
-    except (KeyError, ValueError) as e:
+    except (ImportError, KeyError, ValueError) as e:
         print(f"Skipping scoring (no API key): {e}")
 
 

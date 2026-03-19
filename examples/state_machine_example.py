@@ -8,11 +8,8 @@ Usage:
     python examples/state_machine_example.py
 """
 
-from lattice import (
-    action,
-    trace_session,
-    trace_transition,
-)
+from lattice.context import trace_session, trace_transition
+from lattice.decorators import action
 
 
 @action(goal="Check input for required fields and format")
